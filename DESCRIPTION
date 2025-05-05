@@ -11,10 +11,14 @@ Authors@R:
       role   = c("aut", "cre", "cph")
     )
 Description: Multivariate Response Variance Component Models for R
-(mrvcr for short) is an R package port of the original Julia package
-by Hua Zhou, Minsoo Kim, and contributors in 2021
+  (mrvcr for short) is an R package port of the original Julia package
+  by Hua Zhou, Minsoo Kim, and contributors in 2021
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 Imports: Rcpp (>= 1.0.12)
 LinkingTo: Rcpp, RcppArmadillo
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+RoxygenNote: 7.3.2

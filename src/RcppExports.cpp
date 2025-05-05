@@ -11,55 +11,43 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// rcpparma_hello_world
-arma::mat rcpparma_hello_world();
-RcppExport SEXP _mrvcr_rcpparma_hello_world() {
+// kron_mv
+arma::vec kron_mv(const List& sigmas, const List& Vs, const arma::vec& x);
+RcppExport SEXP _mrvcr_kron_mv(SEXP sigmasSEXP, SEXP VsSEXP, SEXP xSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    rcpp_result_gen = Rcpp::wrap(rcpparma_hello_world());
+    Rcpp::traits::input_parameter< const List& >::type sigmas(sigmasSEXP);
+    Rcpp::traits::input_parameter< const List& >::type Vs(VsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type x(xSEXP);
+    rcpp_result_gen = Rcpp::wrap(kron_mv(sigmas, Vs, x));
     return rcpp_result_gen;
 END_RCPP
 }
-// rcpparma_outerproduct
-arma::mat rcpparma_outerproduct(const arma::colvec& x);
-RcppExport SEXP _mrvcr_rcpparma_outerproduct(SEXP xSEXP) {
+// rcpp_fit_mrvc
+List rcpp_fit_mrvc(NumericVector vecY, int n, int d, NumericVector vecX, int p, List Vlist, bool reml, std::string algo, double tol, int max_iter);
+RcppExport SEXP _mrvcr_rcpp_fit_mrvc(SEXP vecYSEXP, SEXP nSEXP, SEXP dSEXP, SEXP vecXSEXP, SEXP pSEXP, SEXP VlistSEXP, SEXP remlSEXP, SEXP algoSEXP, SEXP tolSEXP, SEXP max_iterSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::colvec& >::type x(xSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcpparma_outerproduct(x));
-    return rcpp_result_gen;
-END_RCPP
-}
-// rcpparma_innerproduct
-double rcpparma_innerproduct(const arma::colvec& x);
-RcppExport SEXP _mrvcr_rcpparma_innerproduct(SEXP xSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::colvec& >::type x(xSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcpparma_innerproduct(x));
-    return rcpp_result_gen;
-END_RCPP
-}
-// rcpparma_bothproducts
-Rcpp::List rcpparma_bothproducts(const arma::colvec& x);
-RcppExport SEXP _mrvcr_rcpparma_bothproducts(SEXP xSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::colvec& >::type x(xSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcpparma_bothproducts(x));
+    Rcpp::traits::input_parameter< NumericVector >::type vecY(vecYSEXP);
+    Rcpp::traits::input_parameter< int >::type n(nSEXP);
+    Rcpp::traits::input_parameter< int >::type d(dSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type vecX(vecXSEXP);
+    Rcpp::traits::input_parameter< int >::type p(pSEXP);
+    Rcpp::traits::input_parameter< List >::type Vlist(VlistSEXP);
+    Rcpp::traits::input_parameter< bool >::type reml(remlSEXP);
+    Rcpp::traits::input_parameter< std::string >::type algo(algoSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_fit_mrvc(vecY, n, d, vecX, p, Vlist, reml, algo, tol, max_iter));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_mrvcr_rcpparma_hello_world", (DL_FUNC) &_mrvcr_rcpparma_hello_world, 0},
-    {"_mrvcr_rcpparma_outerproduct", (DL_FUNC) &_mrvcr_rcpparma_outerproduct, 1},
-    {"_mrvcr_rcpparma_innerproduct", (DL_FUNC) &_mrvcr_rcpparma_innerproduct, 1},
-    {"_mrvcr_rcpparma_bothproducts", (DL_FUNC) &_mrvcr_rcpparma_bothproducts, 1},
+    {"_mrvcr_kron_mv", (DL_FUNC) &_mrvcr_kron_mv, 3},
+    {"_mrvcr_rcpp_fit_mrvc", (DL_FUNC) &_mrvcr_rcpp_fit_mrvc, 10},
     {NULL, NULL, 0}
 };
 
