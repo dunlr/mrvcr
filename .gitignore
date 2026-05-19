@@ -1,0 +1,37 @@
+# R session / RStudio
+.Rhistory
+.RData
+.RUserdata
+.Rproj.user/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.cache/
+compile_commands.json
+
+# R package build/check artifacts
+*.tar.gz
+*.Rcheck/
+Meta/
+docs/
+pkgdown/
+README.html
+README_files/
+
+# Rust build artifacts
+src/rust/target/
+src/rust/vendor/
+src/rust/.cargo/
+
+# Generated makevars from configure
+src/Makevars
+src/Makevars.win
+
+# Local benchmark outputs, not scripts
+bench/results/
+bench/*.rds
+bench/*.csv
+bench/*.html
+bench/*.png
