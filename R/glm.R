@@ -225,6 +225,11 @@ glm <- function(formula, family = gaussian, data, weights, subset,
     FALSE
   )
 
+  if (!isTRUE(fit_rust$converged)) {
+    warning("mrvcr::glm: Fisher scoring did not converge within maxit iterations",
+            call. = FALSE)
+  }
+
   coefficients <- fit_rust$coefficients
   names(coefficients) <- colnames(X) %||% paste0("x", seq_along(coefficients))
 
