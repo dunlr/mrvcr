@@ -52,6 +52,7 @@ vcov.mrvcr_lm <- function(object, ...) {
   out
 }
 
+#' @importFrom stats sigma
 #' @export
 sigma.mrvcr_lm <- function(object, ...) {
   if (inherits(object, "mrvcr_mlm")) {
@@ -72,7 +73,7 @@ print.mrvcr_lm <- function(x, digits = max(3L, getOption("digits") - 3L), ...) {
   print(x$call)
 
   cat("\nCoefficients:\n")
-  print(coef(x), digits = digits)
+  print(stats::coef(x), digits = digits)
 
   cat("\nBackend method:", x$method, "\n")
   cat("Compatibility mode:", x$compat, "\n")
@@ -98,7 +99,7 @@ summary.mrvcr_lm <- function(object, ...) {
   sigma <- sqrt(rss / df)
 
   if (!is.null(object$rust) && !is.null(object$rust$vcov)) {
-    vc <- vcov(object)
+    vc <- stats::vcov(object)
     se <- sqrt(diag(vc))
     tval <- coef / se
     pval <- 2 * stats::pt(abs(tval), df = df, lower.tail = FALSE)
@@ -190,7 +191,7 @@ print.summary.mrvcr_lm <- function(x, digits = max(3L, getOption("digits") - 3L)
   print(summary(x$residuals), digits = digits)
 
   cat("\nCoefficients:\n")
-  printCoefmat(x$coefficients, digits = digits, signif.stars = TRUE)
+  stats::printCoefmat(x$coefficients, digits = digits, signif.stars = TRUE)
 
   cat("\nResidual standard error:", format(signif(x$sigma, digits)), "\n")
 
@@ -241,10 +242,10 @@ predict.mrvcr_lm <- function(object, newdata = NULL, ...) {
   }
 
   if (is.null(newdata)) {
-    return(fitted(object))
+    return(stats::fitted(object))
   }
 
-  tt <- delete.response(stats::terms(object))
+  tt <- stats::delete.response(stats::terms(object))
   mf <- stats::model.frame(tt, newdata, na.action = stats::na.pass, xlev = object$xlevels)
   X <- stats::model.matrix(tt, mf, contrasts.arg = object$contrasts)
 

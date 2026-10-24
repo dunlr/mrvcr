@@ -19,24 +19,42 @@ enum Link {
     Log,
     Logit,
     Inverse,
+    Probit,
+    Cloglog,
+    Loglog,
+    Cauchit,
 }
 
 impl TryFrom<&str> for Link {
     type Error = extendr_api::Error;
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
-        let key = s.trim().to_ascii_lowercase();
-
-        match key.as_str() {
+        match s.trim().to_ascii_lowercase().as_str() {
             "identity" => Ok(Self::Identity),
-            "log" => Ok(Self::Log),
+            "log" | "mu^0" => Ok(Self::Log), // statmod::tweedie(log link)
             "logit" => Ok(Self::Logit),
             "inverse" => Ok(Self::Inverse),
+            "probit" => Ok(Self::Probit),
+            "cloglog" => Ok(Self::Cloglog),
+            "loglog" => Ok(Self::Loglog),
+            "cauchit" => Ok(Self::Cauchit),
             _ => Err(extendr_api::Error::Other(format!(
-                "Unknown link: {s}. Expected identity, log, logit, or inverse."
+                "GLM link '{s}' is not implemented in Rust. Supported: identity, log, logit, inverse, probit, cloglog, loglog, cauchit (and mu^0)."
             ))),
         }
     }
+}
+
+// Abramowitz-Stegun approximation, max absolute error approximately 7.5e-8.
+// Used only for the inverse-probit link; no R callbacks in the numeric loop.
+fn standard_normal_cdf(z: f64) -> f64 {
+    let a = z.abs();
+    let t = 1.0 / (1.0 + 0.2316419 * a);
+    let upper = (-0.5 * a * a).exp() / (2.0 * std::f64::consts::PI).sqrt()
+        * t
+        * (0.319381530 + t * (-0.356563782 + t * (1.781477937
+           + t * (-1.821255978 + t * 1.330274429))));
+    if z >= 0.0 { 1.0 - upper } else { upper }
 }
 
 impl Link {
@@ -53,29 +71,37 @@ impl Link {
                 }
             }
             Self::Inverse => 1.0 / eta,
+            Self::Probit => standard_normal_cdf(eta),
+            Self::Cloglog => -(-eta.exp()).exp_m1(),
+            Self::Loglog => (-(-eta).exp()).exp(),
+            Self::Cauchit => 0.5 + eta.atan() / std::f64::consts::PI,
         }
     }
 
-    fn derivative(self, mu: f64) -> f64 {
-        let eps = 1e-12;
-
+    // d mu / d eta. Numerically preferable to computing g'(mu) for tail links.
+    fn mu_eta(self, eta: f64) -> f64 {
         match self {
             Self::Identity => 1.0,
-            Self::Log => 1.0 / mu.max(eps),
+            Self::Log => eta.exp(),
             Self::Logit => {
-                let m = mu.clamp(eps, 1.0 - eps);
-                1.0 / (m * (1.0 - m))
+                let mu = self.inverse(eta);
+                mu * (1.0 - mu)
             }
-            Self::Inverse => -1.0 / (mu * mu),
+            Self::Inverse => -1.0 / (eta * eta),
+            Self::Probit => (-0.5 * eta * eta).exp()
+                / (2.0 * std::f64::consts::PI).sqrt(),
+            Self::Cloglog => (eta - eta.exp()).exp(),
+            Self::Loglog => (-eta - (-eta).exp()).exp(),
+            Self::Cauchit => 1.0 / (std::f64::consts::PI * (1.0 + eta * eta)),
         }
     }
 
     fn clamp_mu(self, mu: f64) -> f64 {
-        let eps = 1e-12;
-
+        const EPS: f64 = 1e-12;
         match self {
-            Self::Logit => mu.clamp(eps, 1.0 - eps),
-            Self::Log | Self::Inverse => mu.max(eps),
+            Self::Logit | Self::Probit | Self::Cloglog | Self::Loglog | Self::Cauchit =>
+                mu.clamp(EPS, 1.0 - EPS),
+            Self::Log | Self::Inverse => mu.max(EPS),
             Self::Identity => mu,
         }
     }
@@ -119,8 +145,17 @@ impl Family {
                 }
             }
 
+            _ if key.starts_with("negative binomial(") => {
+                if param <= 0.0 || !param.is_finite() {
+                    Err(extendr_api::Error::Other(
+                        "Negative binomial requires a positive theta from its R family object or 'param'.".to_string(),
+                    ))
+                } else {
+                    Ok(Self::NegativeBinomial { theta: param })
+                }
+            }
             _ => Err(extendr_api::Error::Other(format!(
-                "Unknown family: {s}. Expected gaussian, poisson, binomial, nb, or tweedie."
+                "GLM family '{s}' is not implemented in Rust. Supported: gaussian, poisson, binomial, negative binomial (fixed theta), tweedie (fixed variance power)."
             ))),
         }
     }
@@ -222,21 +257,18 @@ fn compute_mu_eta_weights(
 
         let mu_i = link.clamp_mu(link.inverse(eta[(i, 0)]));
         let var_i = family.variance(mu_i);
-        let g_prime = link.derivative(mu_i);
+        let dmu_deta = link.mu_eta(eta[(i, 0)]);
 
-        if !var_i.is_finite() || var_i <= 0.0 || !g_prime.is_finite() || g_prime == 0.0 {
+        if !var_i.is_finite() || var_i <= 0.0 ||
+            !dmu_deta.is_finite() || dmu_deta == 0.0 {
             return Err(Error::Other(format!(
-                "Invalid IRLS weight at row {}: y = {}, mu = {}, variance = {}, g_prime = {}.",
-                i + 1,
-                y[(i, 0)],
-                mu_i,
-                var_i,
-                g_prime
+                "Invalid IRLS weight at row {}: y = {}, mu = {}, variance = {}, dmu_deta = {}.",
+                i + 1, y[(i, 0)], mu_i, var_i, dmu_deta
             )));
         }
 
         mu[(i, 0)] = mu_i;
-        weights[i] = prior_weights[i] / (var_i * g_prime * g_prime);
+        weights[i] = prior_weights[i] * dmu_deta * dmu_deta / var_i;
     }
 
     Ok((eta, mu, weights))
@@ -297,6 +329,20 @@ pub fn ffi_fit_standard(
 
     check_all_finite(&x, "x")?;
     check_all_finite(&y, "y")?;
+    for i in 0..n {
+        let value = y[(i, 0)];
+        let invalid = match family {
+            Family::Binomial => value < 0.0 || value > 1.0,
+            Family::Poisson | Family::NegativeBinomial { .. } => value < 0.0,
+            Family::Tweedie { power } if power > 1.0 && power < 2.0 => value < 0.0,
+            _ => false,
+        };
+        if invalid {
+            return Err(Error::Other(format!(
+                "Response at row {} is outside the support of the selected GLM family.", i + 1
+            )));
+        }
+    }
 
     let prior_weights = optional_numeric_vector_from_robj(&weights_obj, n, 1.0, "weights")?;
     let offset = optional_numeric_vector_from_robj(&offset_obj, n, 0.0, "offset")?;
@@ -332,8 +378,8 @@ pub fn ffi_fit_standard(
 
         for i in 0..n {
             let mu_i = mu[(i, 0)];
-            let g_prime = link.derivative(mu_i);
-            let z_total = eta[(i, 0)] + (y[(i, 0)] - mu_i) * g_prime;
+            let dmu_deta = link.mu_eta(eta[(i, 0)]);
+            let z_total = eta[(i, 0)] + (y[(i, 0)] - mu_i) / dmu_deta;
 
             // Offset is fixed, so the working response for beta removes it.
             z_for_beta[(i, 0)] = z_total - offset[i];

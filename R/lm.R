@@ -8,6 +8,21 @@
 #' `compat = "stats"` builds base-R QR/effects components and inherits from
 #' `"lm"`/`"mlm"` so stats S3 methods can be used as fallbacks.
 #'
+#' @param formula A model formula, as in [stats::lm()].
+#' @param data An optional data frame, list, or environment containing variables.
+#' @param subset An optional expression selecting observations.
+#' @param weights Optional nonnegative observation weights.
+#' @param na.action A missing-value handling function.
+#' @param method Numerical method, e.g. `"qr"`, `"householder_qr"`, or `"cholesky"`.
+#' @param model Whether to retain the model frame in the fitted object.
+#' @param x Whether to retain the model matrix.
+#' @param y Whether to retain the response.
+#' @param qr Whether to request the QR component of the fitted object.
+#' @param singular.ok Whether rank-deficient fits may proceed.
+#' @param contrasts Optional factor contrasts.
+#' @param offset Optional known offset to the linear predictor.
+#' @param ... Additional backend controls, including `compat`, `tol`, `pet`, `se`.
+#'
 #' @export
 lm <- function(formula, data, subset, weights, na.action,
                method = "qr", model = TRUE, x = FALSE, y = FALSE,
@@ -77,7 +92,7 @@ lm <- function(formula, data, subset, weights, na.action,
     }
   }
 
-  if (is.empty.model(mt)) {
+  if (stats::is.empty.model(mt)) {
     x_mat <- matrix(, ny, 0L)
 
     if (mlm) {

@@ -21,6 +21,35 @@ lm(
   ...
 )
 }
+\arguments{
+\item{formula}{A model formula, as in \code{\link[stats:lm]{stats::lm()}}.}
+
+\item{data}{An optional data frame, list, or environment containing variables.}
+
+\item{subset}{An optional expression selecting observations.}
+
+\item{weights}{Optional nonnegative observation weights.}
+
+\item{na.action}{A missing-value handling function.}
+
+\item{method}{Numerical method, e.g. \code{"qr"}, \code{"householder_qr"}, or \code{"cholesky"}.}
+
+\item{model}{Whether to retain the model frame in the fitted object.}
+
+\item{x}{Whether to retain the model matrix.}
+
+\item{y}{Whether to retain the response.}
+
+\item{qr}{Whether to request the QR component of the fitted object.}
+
+\item{singular.ok}{Whether rank-deficient fits may proceed.}
+
+\item{contrasts}{Optional factor contrasts.}
+
+\item{offset}{Optional known offset to the linear predictor.}
+
+\item{...}{Additional backend controls, including \code{compat}, \code{tol}, \code{pet}, \code{se}.}
+}
 \description{
 This intentionally shadows stats::lm when mrvcr is attached.
 }

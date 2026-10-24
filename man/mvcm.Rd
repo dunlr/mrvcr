@@ -6,6 +6,14 @@
 \usage{
 mvcm(formula, data = parent.frame(), pet = "MLE")
 }
+\arguments{
+\item{formula}{Multivariate-response regression formula, e.g. \code{cbind(y1, y2) ~ x}.}
+
+\item{data}{A data frame or environment containing model variables.}
+
+\item{pet}{Requested estimation criterion; the present Rust engine performs
+only ordinary least squares, not variance-component ML/REML estimation.}
+}
 \description{
 Multivariate Response Variance Component model
 }
