@@ -11,6 +11,8 @@ wlm_fit_rust <- function(y, x, weights, offset, pet, method, tol, singular_ok, c
 
 glm_fit_rust <- function(y, x, weights, offset, family, link, pet, method, param, max_iter, tol, singular_ok, calc_se) .Call(wrap__glm_fit_rust, y, x, weights, offset, family, link, pet, method, param, max_iter, tol, singular_ok, calc_se)
 
+penalized_lm_fit_rust <- function(y, x, weights, offset, penalty_factor, pet, lambda, alpha, method) .Call(wrap__penalized_lm_fit_rust, y, x, weights, offset, penalty_factor, pet, lambda, alpha, method)
+
 vcm_fit_rust <- function(y, x, v, pet, method) .Call(wrap__vcm_fit_rust, y, x, v, pet, method)
 
 vcm_zzt_fit_rust <- function(y, x, z, pet, method) .Call(wrap__vcm_zzt_fit_rust, y, x, z, pet, method)

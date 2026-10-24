@@ -91,6 +91,25 @@ fn glm_fit_rust(
     )
 }
 
+// --- PENALIZED LINEAR MODEL INTERFACE ---
+
+#[extendr]
+fn penalized_lm_fit_rust(
+    y: Robj,
+    x: Robj,
+    weights: Robj,
+    offset: Robj,
+    penalty_factor: Robj,
+    pet: &str,
+    lambda: f64,
+    alpha: f64,
+    method: &str,
+) -> extendr_api::Result<List> {
+    models::linear::penalized::ffi_fit(
+        y, x, weights, offset, penalty_factor, pet, lambda, alpha, method,
+    )
+}
+
 // --- VARIANCE COMPONENTS MODULE INTERFACES ---
 
 #[extendr]
@@ -172,6 +191,7 @@ extendr_module! {
     fn lm_fit_rust;
     fn wlm_fit_rust;
     fn glm_fit_rust;
+    fn penalized_lm_fit_rust;
 
     fn vcm_fit_rust;
     fn vcm_zzt_fit_rust;
