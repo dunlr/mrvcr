@@ -370,6 +370,88 @@ fn compute_mu_eta_weights(
     Ok((eta, mu, weights))
 }
 
+// Expected-information covariance: (X' W X)^{-1}, WITHOUT the dispersion
+// multiplier. Compute it from a pivoted QR of sqrt(W) X, rather than forming
+// normal equations and squaring the condition number.
+//
+// Optional because a p x p covariance matrix can be large. Rank-deficient
+// fits return no native covariance; stats::summary.glm() can use the stored
+// R QR to report the estimable coefficients on the R side.
+fn fisher_covariance_unscaled(
+    x: &Mat<f64>,
+    weights: &[f64],
+) -> extendr_api::Result<(Vec<f64>, bool)> {
+    use extendr_api::Error;
+    let n = x.nrows();
+    let p = x.ncols();
+    if p == 0 { return Ok((Vec::new(), true)); }
+    if n < p { return Ok((Vec::new(), false)); }
+
+    let mut work = Mat::<f64>::zeros(n, p);
+    for i in 0..n {
+        if !weights[i].is_finite() || weights[i] < 0.0 {
+            return Err(Error::Other(format!(
+                "Non-finite or negative final Fisher weight at row {}.", i + 1
+            )));
+        }
+        let sw = weights[i].sqrt();
+        for j in 0..p {
+            work[(i, j)] = x[(i, j)] * sw;
+        }
+    }
+    check_all_finite(&work, "weighted GLM design")?;
+
+    let decomposition = work.col_piv_qr();
+    let r = decomposition.R();
+    let mut max_diag: f64 = 0.0;
+    for i in 0..p {
+        max_diag = max_diag.max(r[(i, i)].abs());
+    }
+    // Match the current GLM solver's rank tolerance for native covariance.
+    if !max_diag.is_finite() || max_diag == 0.0 {
+        return Ok((Vec::new(), false));
+    }
+    for i in 0..p {
+        if !r[(i, i)].is_finite() || r[(i, i)].abs() <= 1e-10 * max_diag {
+            return Ok((Vec::new(), false));
+        }
+    }
+
+    // Invert upper-triangular R by back-substitution. inv(R) is p x p.
+    let mut rinv = Mat::<f64>::zeros(p, p);
+    for col in 0..p {
+        for i in (0..p).rev() {
+            let mut v = if i == col { 1.0 } else { 0.0 };
+            for k in (i + 1)..p {
+                v -= r[(i, k)] * rinv[(k, col)];
+            }
+            rinv[(i, col)] = v / r[(i, i)];
+        }
+    }
+
+    // With A P = Q R, the covariance in original coefficient coordinates is
+    // P [R^{-1} (R^{-1})'] P'.
+    let (forward, _) = decomposition.P().arrays();
+    let mut covariance = vec![0.0; p * p];
+    for j in 0..p {
+        for i in 0..p {
+            let mut value = 0.0;
+            for k in 0..p {
+                value += rinv[(i, k)] * rinv[(j, k)];
+            }
+            let oi = forward[i];
+            let oj = forward[j];
+            covariance[oi + p * oj] = value;
+        }
+    }
+    if covariance.iter().any(|v| !v.is_finite()) {
+        return Err(Error::Other(
+            "Non-finite inverse Fisher information; inference unavailable.".to_string()
+        ));
+    }
+    Ok((covariance, true))
+}
+
 pub fn ffi_fit_standard(
     y_obj: Robj,
     x_obj: Robj,
@@ -383,7 +465,7 @@ pub fn ffi_fit_standard(
     max_iter: i32,
     tol: f64,
     singular_ok: bool,
-    _calc_se: bool,
+    calc_se: bool,
 ) -> extendr_api::Result<List> {
     use extendr_api::{list, Error};
 
@@ -549,6 +631,14 @@ pub fn ffi_fit_standard(
         residuals.push(r);
     }
 
+    // Derive expected Fisher information at the final iterate, not the last
+    // pre-update iterate. It is optional and withheld for nonconverged fits.
+    let (vcov_unscaled, covariance_available) = if calc_se && converged {
+        fisher_covariance_unscaled(&x, &final_working_weights)?
+    } else {
+        (Vec::new(), false)
+    };
+
     Ok(list!(
         coefficients = coefficients,
         fitted_values = fitted_values,
@@ -556,6 +646,8 @@ pub fn ffi_fit_standard(
         residuals = residuals,
         prior_weights = prior_weights,
         weights = final_working_weights,
+        vcov_unscaled = vcov_unscaled,
+        covariance_available = covariance_available,
         deviance = current_deviance,
         iterations = iterations as i32,
         converged = converged,

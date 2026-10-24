@@ -61,8 +61,11 @@ family and link support is validated by the Rust backend.}
 
 \item{contrasts}{Optional factor contrasts for the model matrix.}
 
-\item{...}{Additional backend controls (e.g. \code{pet}, \code{rust_method}, \code{param})
-and GLM control arguments.}
+\item{...}{Additional backend controls (e.g. \code{pet}, \code{rust_method}, \code{param},
+\code{se}) and GLM control arguments. Set \code{se = TRUE} to additionally compute
+the unscaled Fisher-information covariance in Rust (full-rank fits only).
+Standard \code{\link[stats:summary.glm]{stats::summary.glm()}} and \code{\link[stats:vcov]{stats::vcov()}} remain available
+without this optional calculation using the stored weighted QR object.}
 }
 \description{
 This intentionally shadows stats::glm when mrvcr is attached.

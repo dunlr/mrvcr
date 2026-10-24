@@ -21,8 +21,11 @@
 #' @param y Whether to retain the response.
 #' @param singular.ok Whether a rank-deficient design is permitted.
 #' @param contrasts Optional factor contrasts for the model matrix.
-#' @param ... Additional backend controls (e.g. `pet`, `rust_method`, `param`)
-#'   and GLM control arguments.
+#' @param ... Additional backend controls (e.g. `pet`, `rust_method`, `param`,
+#'   `se`) and GLM control arguments. Set `se = TRUE` to additionally compute
+#'   the unscaled Fisher-information covariance in Rust (full-rank fits only).
+#'   Standard [stats::summary.glm()] and [stats::vcov()] remain available
+#'   without this optional calculation using the stored weighted QR object.
 #'
 #' @importFrom stats gaussian
 #' @export
@@ -45,7 +48,8 @@ glm <- function(formula, family = gaussian, data, weights, subset,
     NULL
   }
 
-  backend_arg_names <- c("pet", "rust_method", "param")
+  backend_arg_names <- c("pet", "rust_method", "param", "se")
+  calc_se <- isTRUE(dots$se)
 
   if (missing(control)) {
     control <- dots[setdiff(names(dots), backend_arg_names)]
@@ -222,8 +226,26 @@ glm <- function(formula, family = gaussian, data, weights, subset,
     as.integer(control$maxit),
     as.numeric(control$epsilon),
     as.logical(singular.ok),
-    FALSE
+    calc_se
   )
+
+  # The Rust calculation is opt-in: covariance is O(p^2) in memory and
+  # is returned unscaled because the dispersion can depend on the R family.
+  # For rank-deficient designs, the native routine deliberately returns NULL
+  # instead of pretending the information matrix is invertible.
+  if (isTRUE(fit_rust$covariance_available)) {
+    p_cov <- ncol(X)
+    if (length(fit_rust$vcov_unscaled) != p_cov * p_cov) {
+      stop("Rust GLM covariance has incorrect dimensions", call. = FALSE)
+    }
+    fit_rust$vcov_unscaled <- matrix(
+      fit_rust$vcov_unscaled,
+      nrow = p_cov, ncol = p_cov,
+      dimnames = list(colnames(X), colnames(X))
+    )
+  } else {
+    fit_rust$vcov_unscaled <- NULL
+  }
 
   if (!isTRUE(fit_rust$converged)) {
     warning("mrvcr::glm: Fisher scoring did not converge within maxit iterations",
@@ -235,7 +257,19 @@ glm <- function(formula, family = gaussian, data, weights, subset,
 
   fitted_values <- fit_rust$fitted_values
   linear_predictors <- fit_rust$linear_predictors
-  residual_values <- fit_rust$residuals
+  # `glm.fit()` stores IRLS *working* residuals, not response residuals,
+  # in the fitted glm object's $residuals field:
+  #   (y - mu) / (d mu / d eta).
+  # summary.glm() uses these working residuals together with the final
+  # working weights to estimate dispersion. Storing y - mu here instead
+  # makes standard errors and Wald tests wrong for non-identity links.
+  # The Rust response residuals remain accessible as fit$rust$residuals.
+  mu_eta <- family$mu.eta(linear_predictors)
+  if (!is.numeric(mu_eta) || length(mu_eta) != length(fitted_values)) {
+    stop("'family$mu.eta' must return one numeric derivative per observation",
+         call. = FALSE)
+  }
+  residual_values <- fit_rust$residuals / mu_eta
 
   names(fitted_values) <- rownames(mf)
   names(linear_predictors) <- rownames(mf)
@@ -271,7 +305,8 @@ glm <- function(formula, family = gaussian, data, weights, subset,
     fitted.values = fitted_values,
     weights = prior_weights,
     deviance = deviance,
-    rank = rank
+    rank = rank,
+    trials = trials
   )
 
   fit <- list(
