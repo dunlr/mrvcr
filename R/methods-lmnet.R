@@ -55,8 +55,13 @@ predict.mrvcr_lmnet <- function(object, newdata = NULL, offset = NULL, ...) {
 print.mrvcr_lmnet <- function(x, digits = max(3L, getOption("digits") - 3L), ...) {
   cat("\nCall:\n")
   print(x$call)
-  cat("\nPET:", x$pet, "(lambda =", format(x$lambda), ")\n")
+  cat("\nPET:", x$pet, "(lambda =", format(x$lambda),
+      ", alpha =", format(x$alpha), ")\n")
   cat("Method:", x$method, "\n")
+  if (identical(x$method, "coordinate_descent")) {
+    cat("Converged:", x$converged, "| Sweeps:", x$iterations,
+        "| KKT violation:", signif(x$kkt_violation, 4L), "\n")
+  }
   cat("\nCoefficients:\n")
   print(x$coefficients, digits = digits)
   invisible(x)

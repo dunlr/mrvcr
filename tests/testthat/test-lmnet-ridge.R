@@ -104,16 +104,18 @@ testthat::test_that("Bad hyperparameters and unavailable PETs error in Rust", {
   testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, lambda=1e308,
                                    penalty.factor=c(0,1e308)), "overflows")
   testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, lambda=1, alpha=0.5), "alpha")
-  testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, pet="Lasso", lambda=1), "not implemented")
-  testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, pet="ElasticNet", lambda=1,
-                                   alpha=0.5), "not implemented")
+  testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, pet="ElasticNet", lambda=1), "alpha")
+  testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, pet="Lasso", lambda=1,
+                                   alpha=0.5), "alpha")
+  testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, pet="Lasso", lambda=1,
+                                   method="cholesky"), "coordinate_descent")
   testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, pet="NoSuchPet", lambda=1), "Unsupported")
   testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, lambda=1,
                                    penalty.factor=c(0,1,1)), "model-matrix column")
   testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, lambda=1,
                                    penalty.factor=c(0,-1)), "penalty.factor")
   testthat::expect_error(mrvcr::lmnet(y ~ x, data=d, lambda=1,
-                                   method="svd"), "Ridge supports")
+                                   method="svd"), "lmnet supports")
 })
 
 testthat::test_that("Scaling prior weights does not change the fitted ridge coefficients", {

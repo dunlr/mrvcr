@@ -14,6 +14,7 @@ pub enum NumericalOptimizer {
     FisherScoring,
     NewtonRaphson,
     MmAlgorithm,
+    CoordinateDescent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +56,10 @@ impl TryFrom<&str> for ApproximationMethod {
                 Ok(Self::Optimization(NumericalOptimizer::NewtonRaphson))
             }
 
+            "cd" | "coordinate_descent" | "coordinatedescent" => {
+                Ok(Self::Optimization(NumericalOptimizer::CoordinateDescent))
+            }
+
             "mm" | "mm_algorithm" | "mmalgorithm" => {
                 Ok(Self::Optimization(NumericalOptimizer::MmAlgorithm))
             }
@@ -62,7 +67,7 @@ impl TryFrom<&str> for ApproximationMethod {
             _ => Err(extendr_api::Error::Other(format!(
                 "Unknown approximation method: {s}. Supported methods include \
                  'qr', 'householder_qr', 'col_piv_qr', 'cholesky', 'svd', \
-                 'dqrls', 'r_qr', 'FisherScoring', and 'MM'."
+                 'dqrls', 'r_qr', 'coordinate_descent', 'FisherScoring', and 'MM'."
             ))),
         }
     }

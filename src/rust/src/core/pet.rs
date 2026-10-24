@@ -1,9 +1,5 @@
-// Parameter estimation targets (PETs).
-//
-// The model defines the parameter space and likelihood/loss. A PET chooses
-// the estimation criterion; numerical solvers are selected independently.
-// Statistical tuning parameters live in variants, rather than overloading
-// numerical tolerances or solver settings.
+// Parameter estimation targets (PETs). Hyperparameters belong to the PET,
+// not to the numerical method used to compute its minimizer.
 use extendr_api::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,27 +15,33 @@ pub enum Pet {
 }
 
 impl Pet {
-    /// Parse a regularized estimation target, with statistical hyperparameters.
-    /// `alpha` is the L1 fraction for elastic net, not a numerical tolerance.
-    /// The zero-alpha ridge case has its own dedicated PET variant.
+    /// `alpha` is NaN only when the R caller omitted this optional input.
+    /// Never infer an elastic-net mixing parameter: the user must specify it.
     pub fn from_regularized_str(name: &str, lambda: f64, alpha: f64) -> Result<Self, Error> {
         if !lambda.is_finite() || lambda < 0.0 {
             return Err(Error::Other("lambda must be finite and nonnegative.".to_string()));
         }
-        if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
-            return Err(Error::Other("alpha must be finite and between 0 and 1.".to_string()));
-        }
         match name.trim().to_ascii_lowercase().replace('-', "_").as_str() {
             "ridge" => {
-                if alpha != 0.0 {
-                    Err(Error::Other("pet = 'Ridge' requires alpha = 0.".to_string()))
-                } else {
+                if alpha.is_nan() || alpha == 0.0 {
                     Ok(Self::Ridge { lambda })
+                } else {
+                    Err(Error::Other("pet = 'Ridge' requires alpha = 0 (or omitted).".to_string()))
                 }
             }
-            "lasso" => Ok(Self::Lasso { lambda }),
+            "lasso" => {
+                if alpha.is_nan() || alpha == 1.0 {
+                    Ok(Self::Lasso { lambda })
+                } else {
+                    Err(Error::Other("pet = 'Lasso' requires alpha = 1 (or omitted).".to_string()))
+                }
+            }
             "elastic_net" | "elasticnet" | "enet" => {
-                Ok(Self::ElasticNet { lambda, alpha })
+                if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
+                    Err(Error::Other("pet = 'ElasticNet' requires a finite alpha in [0, 1].".to_string()))
+                } else {
+                    Ok(Self::ElasticNet { lambda, alpha })
+                }
             }
             other => Err(Error::Other(format!(
                 "Unsupported penalized PET '{other}'. Expected Ridge, Lasso, or ElasticNet."

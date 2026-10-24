@@ -104,9 +104,11 @@ fn penalized_lm_fit_rust(
     lambda: f64,
     alpha: f64,
     method: &str,
+    max_iter: i32,
+    tol: f64,
 ) -> extendr_api::Result<List> {
     models::linear::penalized::ffi_fit(
-        y, x, weights, offset, penalty_factor, pet, lambda, alpha, method,
+        y, x, weights, offset, penalty_factor, pet, lambda, alpha, method, max_iter, tol,
     )
 }
 

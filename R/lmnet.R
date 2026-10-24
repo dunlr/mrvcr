@@ -1,19 +1,21 @@
 #' Penalized Gaussian Linear Regression (Experimental)
 #'
-#' Fit Gaussian models using an explicitly chosen parameter-estimation target
-#' (`pet`) and a separate numerical method. The current native target is
-#' `pet = "Ridge"`. Lasso and elastic net are reserved in the Rust PET enum,
-#' but their solvers are not yet implemented.
+#' Fits Gaussian models with a parameter estimation target (`pet`) distinct
+#' from the numerical solver (`method`). The PET selects a penalized objective:
 #'
-#' Ridge minimizes, over all response columns, the sum of weighted residual
-#' squares divided by `2 * sum(weights)` plus
-#' `lambda / 2 * sum(penalty.factor * coefficients^2)`.
-#' An intercept is unpenalized by default. Predictors are not standardized.
+#' `weighted_RSS / (2 * sum(weights)) + lambda * sum_jr penalty.factor[j] *
+#' (alpha * abs(beta[j,r]) + (1-alpha)/2 * beta[j,r]^2)`.
 #'
-#' `lmnet()` is intentionally separate from [lm()] until penalized-model
-#' compatibility and inference semantics have been established. Its return
-#' value does *not* inherit from `lm`: ordinary OLS standard errors and AIC
-#' are not applicable without additional definitions.
+#' `pet = "Ridge"` fixes `alpha = 0`, `pet = "Lasso"` fixes `alpha = 1`,
+#' and `pet = "ElasticNet"` requires an explicit `alpha` in `[0, 1]`.
+#' `method = "auto"` selects Cholesky for ridge and coordinate descent for
+#' lasso/elastic net. Coordinate descent is a single-lambda, cold-start,
+#' dense implementation; it does not standardize X or construct a Gram matrix.
+#' An intercept is unpenalized by default; multiple response columns are
+#' penalized independently, not with a joint group penalty.
+#'
+#' `lmnet()` is separate from [lm()]; returned objects do not inherit the
+#' conventional `lm` class, which would imply unjustified OLS inference.
 #'
 #' @param formula Model formula, as in [stats::lm()]. May have a multivariate
 #'   response using `cbind()`.
@@ -23,27 +25,30 @@
 #'   `sum(weights)` rather than the number of observations.
 #' @param na.action Missing-value handling function.
 #' @param offset Optional additive offset; common to all response columns.
-#' @param pet Statistical estimation target: currently `"Ridge"`.
+#' @param pet Statistical target: `"Ridge"`, `"Lasso"`, or `"ElasticNet"`.
 #' @param lambda Nonnegative statistical regularization parameter.
-#' @param alpha Elastic-net L1 fraction (must be zero for Ridge); reserved for
-#'   future lasso/elastic-net implementations.
-#' @param method Numerical solver: `"cholesky"`, `"qr"` (pivoted), or
-#'   `"householder_qr"`. Cholesky is faster but QR is often preferable for
-#'   ill-conditioned designs.
-#' @param penalty.factor Nonnegative coefficient-specific quadratic penalty
-#'   weights in the order of the model-matrix columns; by default all ones
+#' @param alpha Elastic-net L1 fraction; omitted for ridge/lasso and required
+#'   for elastic net. PET-specific constraints are validated in Rust.
+#' @param method Numerical method: `"auto"`, `"cholesky"`, `"qr"`
+#'   (pivoted), `"householder_qr"`, or `"coordinate_descent"`.
+#' @param penalty.factor Nonnegative coefficient-specific penalty
+#'   factors in the order of the model-matrix columns; by default all ones
 #'   except the intercept, whose factor is zero.
+#' @param max_iter Maximum coordinate-descent sweeps per response.
+#' @param tol Relative first-order (KKT) stopping tolerance for coordinate descent.
 #' @param model,x,y Whether to retain the model frame, design matrix, or
 #'   response in the returned object.
 #' @param contrasts Optional list of contrast coding settings.
 #'
 #' @return An object of class `mrvcr_lmnet` with coefficients, fitted values,
-#'   residuals, weighted RSS, the optimized objective, and the Rust result.
+#'   residuals, weighted RSS, the objective, convergence diagnostics, and
+#'   the Rust result.
 #' @export
 lmnet <- function(formula, data, subset, weights, na.action, offset,
-                  pet = "Ridge", lambda, alpha = 0,
-                  method = "cholesky", penalty.factor = NULL,
-                  model = TRUE, x = FALSE, y = FALSE, contrasts = NULL) {
+                  pet = "Ridge", lambda, alpha = NULL,
+                  method = "auto", penalty.factor = NULL,
+                  model = TRUE, x = FALSE, y = FALSE, contrasts = NULL,
+                  max_iter = 10000L, tol = 1e-8) {
   cl <- match.call()
   if (missing(lambda)) {
     stop("'lambda' is required for a penalized PET.", call. = FALSE)
@@ -51,8 +56,18 @@ lmnet <- function(formula, data, subset, weights, na.action, offset,
   if (length(lambda) != 1L || !is.numeric(lambda)) {
     stop("'lambda' must be a numeric scalar.", call. = FALSE)
   }
-  if (length(alpha) != 1L || !is.numeric(alpha)) {
-    stop("'alpha' must be a numeric scalar.", call. = FALSE)
+  if (!is.null(alpha) &&
+      (length(alpha) != 1L || !is.numeric(alpha) || !is.finite(alpha))) {
+    stop("'alpha' must be NULL or a finite numeric scalar.", call. = FALSE)
+  }
+  if (length(max_iter) != 1L || !is.numeric(max_iter) ||
+      !is.finite(max_iter) || max_iter < 1 || max_iter != floor(max_iter) ||
+      max_iter > .Machine$integer.max) {
+    stop("'max_iter' must be a positive integer.", call. = FALSE)
+  }
+  if (length(tol) != 1L || !is.numeric(tol) ||
+      !is.finite(tol) || tol <= 0) {
+    stop("'tol' must be finite and positive.", call. = FALSE)
   }
   if (length(pet) != 1L || !is.character(pet) || is.na(pet)) {
     stop("'pet' must be a single character string.", call. = FALSE)
@@ -99,8 +114,13 @@ lmnet <- function(formula, data, subset, weights, na.action, offset,
 
   fit <- penalized_lm_fit_rust(
     yy, X, ww, oo, unname(penalty.factor), as.character(pet),
-    as.numeric(lambda), as.numeric(alpha), as.character(method)
+    as.numeric(lambda), if (is.null(alpha)) NaN else as.numeric(alpha),
+    as.character(method), as.integer(max_iter), as.numeric(tol)
   )
+  if (!isTRUE(fit$converged)) {
+    warning("lmnet coordinate descent did not satisfy the requested KKT tolerance; inspect fit$converged, fit$kkt_violation and fit$iterations.",
+            call. = FALSE)
+  }
   coef_names <- colnames(X)
   response_names <- if (multi) {
     colnames(yy) %||% paste0("Y", seq_len(q))
@@ -124,7 +144,9 @@ lmnet <- function(formula, data, subset, weights, na.action, offset,
     call = cl, terms = tt, coefficients = beta,
     fitted.values = fitted, residuals = residuals,
     objective = fit$objective, weighted.rss = fit$weighted_rss,
-    pet = fit$pet, lambda = lambda, alpha = alpha, method = fit$method,
+    pet = fit$pet, lambda = lambda, alpha = fit$alpha, method = fit$method,
+    converged = fit$converged, iterations = fit$iterations,
+    kkt_violation = fit$kkt_violation,
     penalty.factor = penalty.factor, weights = ww, offset = oo,
     na.action = attr(mf, "na.action"),
     contrasts = attr(X, "contrasts"),

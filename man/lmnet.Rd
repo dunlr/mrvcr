@@ -13,13 +13,15 @@ lmnet(
   offset,
   pet = "Ridge",
   lambda,
-  alpha = 0,
-  method = "cholesky",
+  alpha = NULL,
+  method = "auto",
   penalty.factor = NULL,
   model = TRUE,
   x = FALSE,
   y = FALSE,
-  contrasts = NULL
+  contrasts = NULL,
+  max_iter = 10000L,
+  tol = 1e-08
 )
 }
 \arguments{
@@ -37,44 +39,49 @@ response using \code{cbind()}.}
 
 \item{offset}{Optional additive offset; common to all response columns.}
 
-\item{pet}{Statistical estimation target: currently \code{"Ridge"}.}
+\item{pet}{Statistical target: \code{"Ridge"}, \code{"Lasso"}, or \code{"ElasticNet"}.}
 
 \item{lambda}{Nonnegative statistical regularization parameter.}
 
-\item{alpha}{Elastic-net L1 fraction (must be zero for Ridge); reserved for
-future lasso/elastic-net implementations.}
+\item{alpha}{Elastic-net L1 fraction; omitted for ridge/lasso and required
+for elastic net. PET-specific constraints are validated in Rust.}
 
-\item{method}{Numerical solver: \code{"cholesky"}, \code{"qr"} (pivoted), or
-\code{"householder_qr"}. Cholesky is faster but QR is often preferable for
-ill-conditioned designs.}
+\item{method}{Numerical method: \code{"auto"}, \code{"cholesky"}, \code{"qr"}
+(pivoted), \code{"householder_qr"}, or \code{"coordinate_descent"}.}
 
-\item{penalty.factor}{Nonnegative coefficient-specific quadratic penalty
-weights in the order of the model-matrix columns; by default all ones
+\item{penalty.factor}{Nonnegative coefficient-specific penalty
+factors in the order of the model-matrix columns; by default all ones
 except the intercept, whose factor is zero.}
 
 \item{model, x, y}{Whether to retain the model frame, design matrix, or
 response in the returned object.}
 
 \item{contrasts}{Optional list of contrast coding settings.}
+
+\item{max_iter}{Maximum coordinate-descent sweeps per response.}
+
+\item{tol}{Relative first-order (KKT) stopping tolerance for coordinate descent.}
 }
 \value{
 An object of class \code{mrvcr_lmnet} with coefficients, fitted values,
-residuals, weighted RSS, the optimized objective, and the Rust result.
+residuals, weighted RSS, the objective, convergence diagnostics, and
+the Rust result.
 }
 \description{
-Fit Gaussian models using an explicitly chosen parameter-estimation target
-(\code{pet}) and a separate numerical method. The current native target is
-\code{pet = "Ridge"}. Lasso and elastic net are reserved in the Rust PET enum,
-but their solvers are not yet implemented.
+Fits Gaussian models with a parameter estimation target (\code{pet}) distinct
+from the numerical solver (\code{method}). The PET selects a penalized objective:
 }
 \details{
-Ridge minimizes, over all response columns, the sum of weighted residual
-squares divided by \code{2 * sum(weights)} plus
-\code{lambda / 2 * sum(penalty.factor * coefficients^2)}.
-An intercept is unpenalized by default. Predictors are not standardized.
+\verb{weighted_RSS / (2 * sum(weights)) + lambda * sum_jr penalty.factor[j] * (alpha * abs(beta[j,r]) + (1-alpha)/2 * beta[j,r]^2)}.
 
-\code{lmnet()} is intentionally separate from \code{\link[=lm]{lm()}} until penalized-model
-compatibility and inference semantics have been established. Its return
-value does \emph{not} inherit from \code{lm}: ordinary OLS standard errors and AIC
-are not applicable without additional definitions.
+\code{pet = "Ridge"} fixes \code{alpha = 0}, \code{pet = "Lasso"} fixes \code{alpha = 1},
+and \code{pet = "ElasticNet"} requires an explicit \code{alpha} in \verb{[0, 1]}.
+\code{method = "auto"} selects Cholesky for ridge and coordinate descent for
+lasso/elastic net. Coordinate descent is a single-lambda, cold-start,
+dense implementation; it does not standardize X or construct a Gram matrix.
+An intercept is unpenalized by default; multiple response columns are
+penalized independently, not with a joint group penalty.
+
+\code{lmnet()} is separate from \code{\link[=lm]{lm()}}; returned objects do not inherit the
+conventional \code{lm} class, which would imply unjustified OLS inference.
 }
