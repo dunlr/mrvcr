@@ -1,11 +1,14 @@
-//! Exact Gaussian variance-component ML/REML with latent-component EM.
+//! Exact Gaussian variance-component ML/REML with EM and genuine MM updates.
 //!
 //! Sigma(theta) = sum_k theta_k K_k, K_k >= 0, rank(K_k) = r_k > 0.
-//! Update: theta_k <- theta_k + theta_k^2/r_k *
-//!          (y' P K_k P y - tr(P K_k)).
-//! P = Sigma^-1 for ML scores (with GLS beta), or
-//! P = Sigma^-1 - Sigma^-1 X (X' Sigma^-1 X)^-1 X' Sigma^-1 for REML.
-//! These are genuine EM updates for latent N(0, theta_k K_k) components.
+//! EM: theta_k(new) = theta_k + theta_k^2 / rank(K_k) * (q_k - t_k).
+//! MM: theta_k(new) = theta_k * sqrt(q_k / t_k).
+//! q_k = (Sigma^-1 (y-X beta_GLS))' K_k (Sigma^-1 (y-X beta_GLS)).
+//! t_k = tr(Sigma^-1 K_k) for profiled ML; tr(P K_k) for REML,
+//! P = Sigma^-1 - Sigma^-1 X (X' Sigma^-1 X)^-1 X' Sigma^-1.
+//! Both algorithms optimize the exact (restricted) Gaussian likelihood.
+//! EM uses latent Gaussian components; MM is a distinct minorization-maximization
+//! algorithm, not an EM step with altered convergence tolerance.
 //! IMPORTANT: the *likelihood* uses profiled GLS beta in both ML and REML.
 //! This initial dense implementation is O(n^3) per iteration and stores K.
 
@@ -121,9 +124,11 @@ pub fn ffi_fit_em(y_obj: Robj, x_obj: Robj, kernel_array: Robj,
         _ => return Err(fail("Gaussian VCM requires PET = 'MLE' or 'REML'.")),
     };
     let method = ApproximationMethod::try_from(method_str)?;
-    if !matches!(method, ApproximationMethod::Optimization(NumericalOptimizer::EmAlgorithm)) {
-        return Err(fail("This VCM endpoint implements only method = 'EM'; MM is reserved for Iteration 5B."));
-    }
+    let use_mm = match method {
+        ApproximationMethod::Optimization(NumericalOptimizer::MmAlgorithm) => true,
+        ApproximationMethod::Optimization(NumericalOptimizer::EmAlgorithm) => false,
+        _ => return Err(fail("Gaussian VCM supports only method = 'EM' or 'MM'.")),
+    };
     if max_iter <= 0 || !tol.is_finite() || tol <= 0.0 {
         return Err(fail("max_iter must be positive and tol must be finite and positive."));
     }
@@ -164,13 +169,40 @@ pub fn ffi_fit_em(y_obj: Robj, x_obj: Robj, kernel_array: Robj,
         let mut next = theta.clone();
         for k in 0..m {
             let (q, tr) = component_score(&state, &kernels[k]);
-            // Expected complete-data quadratic: theta*r - theta^2*tr + theta^2*q.
-            let expectation = theta[k] * ((ranks[k] as f64) - theta[k] * tr)
-                + theta[k] * theta[k] * q;
-            // Tiny negative values caused by roundoff are projected to the boundary.
-            next[k] = (expectation / (ranks[k] as f64)).max(0.0);
+            if use_mm {
+                // Zhou et al.: maximize the separable MM minorizer
+                //   -0.5 * (theta_new * tr + theta_old^2 * q / theta_new).
+                // The numerator is nonnegative for PSD kernels, and the
+                // denominator is positive for a nonzero PSD kernel and P>0
+                // on its effective subspace (for REML: after projection).
+                // In particular, REML kernels entirely in col(X) have zero
+                // information and must be rejected rather than divided by 0.
+                let tr_scale = 1.0 + tr.abs();
+                let q_scale = 1.0 + q.abs();
+                if !tr.is_finite() || tr <= 1e-12 * tr_scale {
+                    return Err(fail(format!(
+                        "MM denominator tr(P K_{}) is nonpositive or numerically zero; the component may be unidentifiable (especially under REML).", k+1
+                    )));
+                }
+                if !q.is_finite() || q < -1e-10 * q_scale {
+                    return Err(fail(format!(
+                        "MM numerator for kernel {} is negative or nonfinite; check PSD kernels and numerical conditioning.", k+1
+                    )));
+                }
+                // Clamp tiny negative quadratic forms caused by roundoff.
+                next[k] = theta[k] * (q.max(0.0) / tr).sqrt();
+            } else {
+                // Latent Gaussian EM M-step:
+                // E[u_k' u_k] = theta*r - theta^2*tr + theta^2*q.
+                let expectation = theta[k] * ((ranks[k] as f64) - theta[k] * tr)
+                    + theta[k] * theta[k] * q;
+                // Tiny negative values caused by roundoff are projected
+                // to the boundary, as in the original EM implementation.
+                next[k] = (expectation / (ranks[k] as f64)).max(0.0);
+            }
             if !next[k].is_finite() {
-                return Err(fail(format!("EM update for kernel {} is not finite; rescale kernels.", k+1)));
+                return Err(fail(format!("{} update for kernel {} is not finite; rescale kernels.",
+                    if use_mm { "MM" } else { "EM" }, k+1)));
             }
         }
         final_relative_change = theta.iter().zip(next.iter())
@@ -178,7 +210,8 @@ pub fn ffi_fit_em(y_obj: Robj, x_obj: Robj, kernel_array: Robj,
         let next_state = evaluate(y, &x, &kernels, &next, restricted)?;
         let slack = 1e-9 * (1.0 + state.loglik.abs());
         if next_state.loglik + slack < state.loglik {
-            return Err(fail("EM likelihood decreased beyond rounding tolerance; check kernel PSD/rank or conditioning."));
+            return Err(fail(format!("{} likelihood decreased beyond rounding tolerance; check kernel PSD/rank or conditioning.",
+                if use_mm { "MM" } else { "EM" })));
         }
         theta = next;
         state = next_state;
@@ -197,6 +230,6 @@ pub fn ffi_fit_em(y_obj: Robj, x_obj: Robj, kernel_array: Robj,
         iterations = iterations as i32,
         relative_change = final_relative_change,
         pet = if restricted { "REML" } else { "MLE" },
-        method = "EM"
+        method = if use_mm { "MM" } else { "EM" }
     ))
 }

@@ -2,7 +2,7 @@
 % Please edit documentation in R/vcm.R
 \name{vcm}
 \alias{vcm}
-\title{Gaussian Variance Component Model via Exact ML/REML and EM (Experimental)}
+\title{Gaussian Variance Component Model via Exact ML/REML, EM and MM (Experimental)}
 \usage{
 vcm(
   formula,
@@ -30,13 +30,14 @@ covariance whenever appropriate. Missing observations are rejected.}
 
 \item{pet}{\code{"MLE"} (alias \code{"ML"}) or \code{"REML"}.}
 
-\item{method}{Only \code{"EM"} in this iteration. \code{"MM"} is not implemented.}
+\item{method}{\code{"EM"} (latent Gaussian expectation-maximization) or \code{"MM"}
+(multiplicative minorization-maximization).}
 
 \item{theta_init}{Optional strictly positive numeric starting values, one
 per kernel. The default uses the sample response variance divided equally
 among components; it is only a starting point, not a model estimate.}
 
-\item{max_iter}{Positive integer number of EM iterations.}
+\item{max_iter}{Positive integer number of optimizer iterations.}
 
 \item{tol}{Positive relative parameter-change stopping tolerance.}
 
@@ -47,7 +48,8 @@ among components; it is only a starting point, not a model estimate.}
 \item{x}{Whether to retain the dense fixed-effects model matrix.}
 }
 \value{
-An experimental \code{mrvcr_vcm_em} object with GLS coefficients,
+An experimental \code{mrvcr_vcm_em} object (legacy class name retained
+for S3 compatibility even for MM fits) with GLS coefficients,
 fitted values, residuals, component estimates, rank information,
 log likelihood, convergence diagnostics, and the likelihood trajectory.
 }
@@ -57,7 +59,8 @@ Covariance kernels must be known symmetric positive-semidefinite \verb{n x n}
 matrices in exactly the same \strong{row order} as the model frame. This dense
 initial implementation validates the kernels using symmetric eigenvalues,
 then evaluates the Gaussian (restricted) log likelihood and fits the
-nonnegative variance components by the latent-component EM algorithm.
+nonnegative variance components using either latent-component EM or the
+multiplicative minorization-maximization (MM) algorithm.
 }
 \details{
 \code{pet = "MLE"} profiles out beta in the ordinary likelihood;
@@ -67,11 +70,14 @@ chosen fixed-effects design basis and cannot freely be compared across
 different fixed-effect formulae. No Laplace or quadrature approximation is
 involved in this Gaussian model.
 
-The updates are \verb{theta[k] + theta[k]^2 / rank(K[k]) * (y' P K[k] P y - tr(P K[k]))}, with \code{P = Sigma^-1} for the profiled
-ML score and \verb{P = Sigma^-1 - Sigma^-1 X (X' Sigma^-1 X)^-1 X' Sigma^-1}
-for REML. The ML formula uses GLS residuals in the quadratic term.
-Initial variance components must be strictly positive; the EM estimates
-may converge to the boundary zero. Identifiability is not guaranteed for
-redundant kernels. This implementation is dense and intended for small
-or moderate models; its computational cost is cubic in n per EM step.
+Let \verb{q[k] = (y-X beta_GLS)' Sigma^-1 K[k] Sigma^-1 (y-X beta_GLS)}.
+Let \verb{t[k] = tr(P K[k])}, where \code{P = Sigma^-1} for profiled ML,
+and \verb{P = Sigma^-1 - Sigma^-1 X (X' Sigma^-1 X)^-1 X' Sigma^-1}
+for REML. The EM update is \code{theta[k] + theta[k]^2 * (q[k]-t[k]) / rank(K[k])}; the distinct MM update is \code{theta[k] * sqrt(q[k]/t[k])}.
+The MM update is derived from a minorization of the likelihood, not
+from a numerical integration approximation. Initial components must be
+strictly positive; estimates may approach the zero boundary. Identifiability
+is not guaranteed for redundant kernels. This implementation is dense and
+intended for small or moderate models; its computational cost is cubic in
+n per EM or MM step.
 }

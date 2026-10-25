@@ -77,7 +77,7 @@ testthat::test_that("low-rank ZZ' kernel supports ML and REML with monotone EM",
 testthat::test_that("EM rejects invalid statistical and covariance inputs", {
   d <- data.frame(y = c(2, 3, 4, 5, 6), x = 1:5)
   I <- diag(5)
-  testthat::expect_error(mrvcr::vcm(y ~ x, d, list(I), method = "MM"), "Only method")
+  testthat::expect_error(mrvcr::vcm(y ~ x, d, list(I), method = "Newton"), "method")
   testthat::expect_error(mrvcr::vcm(y ~ x, d, list(I), pet = "Ridge"), "pet")
   testthat::expect_error(mrvcr::vcm(y ~ x, d, list(-I)), "positive semidefinite")
   testthat::expect_error(mrvcr::vcm(y ~ x, d, list(matrix(0, 5, 5))), "rank zero")

@@ -2,7 +2,7 @@
 % Please edit documentation in R/vcm-zzt-compat.R
 \name{vcm_zzt}
 \alias{vcm_zzt}
-\title{Fit the legacy ZZT variance-component model via the validated Gaussian EM engine}
+\title{Fit a ZZT variance-component model via Gaussian EM or MM}
 \usage{
 vcm_zzt(
   formula,
@@ -27,13 +27,12 @@ vcm_zzt(
 
 \item{pet}{\code{"MLE"} or \code{"REML"}.}
 
-\item{method}{\code{"EM"} to use the implemented Gaussian VCM engine;
-legacy \code{"MM"} is deliberately rejected because its old updates were not valid.}
+\item{method}{\code{"MM"} (default) or \code{"EM"}; both use the validated VCM engine.}
 
 \item{theta_init}{Optional length-two positive initial variance vector
 (random effect and residual, respectively).}
 
-\item{max_iter}{Maximum EM iterations.}
+\item{max_iter}{Maximum EM/MM iterations.}
 
 \item{tol}{Positive convergence tolerance.}
 
@@ -51,12 +50,11 @@ Compatibility interface for models whose random-effect covariance kernel is
 variance components, one for random effects and one for residual noise.
 }
 \details{
-The previous \code{vcm_zzt()} implementation was an unfinished MM prototype.
-Its variance-component updates were placeholders, not a valid estimator.
-Consequently \code{method = "MM"} remains unavailable until the real MM optimizer
-is implemented. To use the validated implementation, \strong{explicitly} set
-\code{method = "EM"}. This intentionally retains the old default \code{"MM"} only
-to avoid silently changing the numerical method of an existing call.
+The previous \code{vcm_zzt()} implementation was an unfinished MM prototype
+with invalid placeholder updates. The default \code{method = "MM"} now calls
+the actual minorization-maximization optimizer of \code{\link[=vcm]{vcm()}}, using the
+same exact Gaussian marginal or restricted likelihood as \code{method = "EM"}.
+Existing EM calls continue to use the unchanged EM optimizer.
 
 The two model frames must refer to exactly the same observations, in exactly
 the same order, without missing values. The random-effects formula must be

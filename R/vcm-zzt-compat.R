@@ -1,16 +1,15 @@
-#' Fit the legacy ZZT variance-component model via the validated Gaussian EM engine
+#' Fit a ZZT variance-component model via Gaussian EM or MM
 #'
 #' Compatibility interface for models whose random-effect covariance kernel is
 #' `Z %*% t(Z)`. This adapter calls [vcm()] with covariance kernels
 #' `list(random = tcrossprod(Z), residual = diag(n))` and therefore fits two
 #' variance components, one for random effects and one for residual noise.
 #'
-#' The previous `vcm_zzt()` implementation was an unfinished MM prototype.
-#' Its variance-component updates were placeholders, not a valid estimator.
-#' Consequently `method = "MM"` remains unavailable until the real MM optimizer
-#' is implemented. To use the validated implementation, **explicitly** set
-#' `method = "EM"`. This intentionally retains the old default `"MM"` only
-#' to avoid silently changing the numerical method of an existing call.
+#' The previous `vcm_zzt()` implementation was an unfinished MM prototype
+#' with invalid placeholder updates. The default `method = "MM"` now calls
+#' the actual minorization-maximization optimizer of [vcm()], using the
+#' same exact Gaussian marginal or restricted likelihood as `method = "EM"`.
+#' Existing EM calls continue to use the unchanged EM optimizer.
 #'
 #' The two model frames must refer to exactly the same observations, in exactly
 #' the same order, without missing values. The random-effects formula must be
@@ -22,11 +21,10 @@
 #'   `~ 0 + group`.
 #' @param data Data used in the fixed and random model frames.
 #' @param pet `"MLE"` or `"REML"`.
-#' @param method `"EM"` to use the implemented Gaussian VCM engine;
-#'   legacy `"MM"` is deliberately rejected because its old updates were not valid.
+#' @param method `"MM"` (default) or `"EM"`; both use the validated VCM engine.
 #' @param theta_init Optional length-two positive initial variance vector
 #'   (random effect and residual, respectively).
-#' @param max_iter Maximum EM iterations.
+#' @param max_iter Maximum EM/MM iterations.
 #' @param tol Positive convergence tolerance.
 #' @param model Whether to retain the fixed-effects model frame.
 #' @param x Whether to retain the fixed-effects design matrix.
@@ -38,10 +36,10 @@ vcm_zzt <- function(formula, random_formula, data = parent.frame(),
                     max_iter = 500L, tol = 1e-7,
                     model = TRUE, x = FALSE) {
   if (!is.character(method) || length(method) != 1L || is.na(method) ||
-      toupper(method) != "EM") {
-    stop("The legacy vcm_zzt() MM algorithm was a placeholder and is not a valid estimator; explicitly use method = 'EM', or call vcm() directly.",
-         call. = FALSE)
+      !toupper(method) %in% c("EM", "MM")) {
+    stop("'method' must be 'EM' or 'MM'.", call. = FALSE)
   }
+  method <- toupper(method)
   if (!inherits(formula, "formula") || length(formula) != 3L) {
     stop("'formula' must be a two-sided formula with a response.", call. = FALSE)
   }
@@ -70,7 +68,7 @@ vcm_zzt <- function(formula, random_formula, data = parent.frame(),
     data = data,
     kernels = list(random = tcrossprod(Z), residual = diag(n)),
     pet = pet,
-    method = "EM",
+    method = method,
     theta_init = theta_init,
     max_iter = max_iter,
     tol = tol,

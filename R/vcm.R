@@ -1,11 +1,12 @@
-#' Gaussian Variance Component Model via Exact ML/REML and EM (Experimental)
+#' Gaussian Variance Component Model via Exact ML/REML, EM and MM (Experimental)
 #'
 #' Fits `Y ~ N(X beta, Sigma)` where `Sigma = sum_k theta[k] * kernels[[k]]`.
 #' Covariance kernels must be known symmetric positive-semidefinite `n x n`
 #' matrices in exactly the same **row order** as the model frame. This dense
 #' initial implementation validates the kernels using symmetric eigenvalues,
 #' then evaluates the Gaussian (restricted) log likelihood and fits the
-#' nonnegative variance components by the latent-component EM algorithm.
+#' nonnegative variance components using either latent-component EM or the
+#' multiplicative minorization-maximization (MM) algorithm.
 #'
 #' `pet = "MLE"` profiles out beta in the ordinary likelihood;
 #' `pet = "REML"` uses the restricted likelihood, including the
@@ -14,14 +15,17 @@
 #' different fixed-effect formulae. No Laplace or quadrature approximation is
 #' involved in this Gaussian model.
 #'
-#' The updates are `theta[k] + theta[k]^2 / rank(K[k]) *
-#' (y' P K[k] P y - tr(P K[k]))`, with `P = Sigma^-1` for the profiled
-#' ML score and `P = Sigma^-1 - Sigma^-1 X (X' Sigma^-1 X)^-1 X' Sigma^-1`
-#' for REML. The ML formula uses GLS residuals in the quadratic term.
-#' Initial variance components must be strictly positive; the EM estimates
-#' may converge to the boundary zero. Identifiability is not guaranteed for
-#' redundant kernels. This implementation is dense and intended for small
-#' or moderate models; its computational cost is cubic in n per EM step.
+#' Let `q[k] = (y-X beta_GLS)' Sigma^-1 K[k] Sigma^-1 (y-X beta_GLS)`.
+#' Let `t[k] = tr(P K[k])`, where `P = Sigma^-1` for profiled ML,
+#' and `P = Sigma^-1 - Sigma^-1 X (X' Sigma^-1 X)^-1 X' Sigma^-1`
+#' for REML. The EM update is `theta[k] + theta[k]^2 * (q[k]-t[k]) /
+#' rank(K[k])`; the distinct MM update is `theta[k] * sqrt(q[k]/t[k])`.
+#' The MM update is derived from a minorization of the likelihood, not
+#' from a numerical integration approximation. Initial components must be
+#' strictly positive; estimates may approach the zero boundary. Identifiability
+#' is not guaranteed for redundant kernels. This implementation is dense and
+#' intended for small or moderate models; its computational cost is cubic in
+#' n per EM or MM step.
 #'
 #' @param formula Fixed-effects formula, including response; numeric univariate y.
 #' @param data Data frame/environment used to construct the model frame.
@@ -30,16 +34,18 @@
 #'   Include a residual kernel such as `diag(n)` to ensure positive-definite
 #'   covariance whenever appropriate. Missing observations are rejected.
 #' @param pet `"MLE"` (alias `"ML"`) or `"REML"`.
-#' @param method Only `"EM"` in this iteration. `"MM"` is not implemented.
+#' @param method `"EM"` (latent Gaussian expectation-maximization) or `"MM"`
+#'   (multiplicative minorization-maximization).
 #' @param theta_init Optional strictly positive numeric starting values, one
 #'   per kernel. The default uses the sample response variance divided equally
 #'   among components; it is only a starting point, not a model estimate.
-#' @param max_iter Positive integer number of EM iterations.
+#' @param max_iter Positive integer number of optimizer iterations.
 #' @param tol Positive relative parameter-change stopping tolerance.
 #' @param contrasts Optional fixed-effects contrasts passed to `model.matrix`.
 #' @param model Whether to store the model frame.
 #' @param x Whether to retain the dense fixed-effects model matrix.
-#' @return An experimental `mrvcr_vcm_em` object with GLS coefficients,
+#' @return An experimental `mrvcr_vcm_em` object (legacy class name retained
+#'   for S3 compatibility even for MM fits) with GLS coefficients,
 #'   fitted values, residuals, component estimates, rank information,
 #'   log likelihood, convergence diagnostics, and the likelihood trajectory.
 #' @export
@@ -57,9 +63,10 @@ vcm <- function(formula, data = parent.frame(), kernels,
   }
   pet <- if (toupper(pet) %in% c("ML", "MLE")) "MLE" else "REML"
   if (!is.character(method) || length(method) != 1L || is.na(method) ||
-      toupper(method) != "EM") {
-    stop("Only method = 'EM' is implemented; MM is planned for the next iteration.", call. = FALSE)
+      !toupper(method) %in% c("EM", "MM")) {
+    stop("'method' must be 'EM' or 'MM'.", call. = FALSE)
   }
+  method <- toupper(method)
   if (!is.numeric(max_iter) || length(max_iter) != 1L ||
       !is.finite(max_iter) || max_iter < 1L || max_iter != floor(max_iter) ||
       max_iter > .Machine$integer.max) {
@@ -140,7 +147,7 @@ vcm <- function(formula, data = parent.frame(), kernels,
   }
   result <- vcm_em_fit_rust(
     as.numeric(response), X, K, as.integer(rank), as.numeric(theta_init),
-    pet, "EM", as.integer(max_iter), as.numeric(tol)
+    pet, method, as.integer(max_iter), as.numeric(tol)
   )
   result$coefficients <- stats::setNames(as.numeric(result$coefficients), colnames(X))
   result$variance_components <- stats::setNames(as.numeric(result$variance_components), kernel_names)
@@ -157,7 +164,7 @@ vcm <- function(formula, data = parent.frame(), kernels,
   if (x) result$x <- X
   class(result) <- "mrvcr_vcm_em"
   if (!result$converged) {
-    warning("VCM EM reached max_iter without satisfying the relative parameter tolerance; examine loglik_history.",
+    warning(sprintf("VCM %s reached max_iter without satisfying the relative parameter tolerance; examine loglik_history.", method),
             call. = FALSE)
   }
   result
