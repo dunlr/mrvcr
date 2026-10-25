@@ -163,6 +163,20 @@ fn penalized_lm_sparse_path_fit_rust(
     )
 }
 
+// Exact Gaussian VCM ML/REML with latent variance-component EM.
+// Deliberately separate from the pre-existing, unimplemented VCM prototype.
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn vcm_em_fit_rust(
+    y: Robj, x: Robj, kernels: Robj, kernel_ranks: Robj,
+    theta_init: Robj, pet: &str, method: &str,
+    max_iter: i32, tol: f64,
+) -> extendr_api::Result<List> {
+    models::vcomp::gaussian_em::ffi_fit_em(
+        y, x, kernels, kernel_ranks, theta_init, pet, method, max_iter, tol,
+    )
+}
+
 // --- VARIANCE COMPONENTS MODULE INTERFACES ---
 
 #[extendr]
@@ -249,6 +263,7 @@ extendr_module! {
     fn penalized_lm_sparse_fit_rust;
     fn penalized_lm_sparse_path_fit_rust;
 
+    fn vcm_em_fit_rust;
     fn vcm_fit_rust;
     fn vcm_zzt_fit_rust;
     fn mvcm_fit_rust;
