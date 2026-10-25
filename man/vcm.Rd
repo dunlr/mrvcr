@@ -15,7 +15,11 @@ vcm(
   tol = 1e-07,
   contrasts = NULL,
   model = TRUE,
-  x = FALSE
+  x = FALSE,
+  init = "equal",
+  stop_rule = "parameter",
+  kkt_tol = sqrt(tol),
+  boundary_tol = 1e-08
 )
 }
 \arguments{
@@ -34,8 +38,9 @@ covariance whenever appropriate. Missing observations are rejected.}
 (multiplicative minorization-maximization).}
 
 \item{theta_init}{Optional strictly positive numeric starting values, one
-per kernel. The default uses the sample response variance divided equally
-among components; it is only a starting point, not a model estimate.}
+per kernel. Named vectors are matched by kernel name; a previous
+\code{mrvcr_vcm_em} fit supplies a warm start. If omitted, \code{init} determines
+the initializer.}
 
 \item{max_iter}{Positive integer number of optimizer iterations.}
 
@@ -46,12 +51,32 @@ among components; it is only a starting point, not a model estimate.}
 \item{model}{Whether to store the model frame.}
 
 \item{x}{Whether to retain the dense fixed-effects model matrix.}
+
+\item{init}{Starting-value strategy when \code{theta_init = NULL}:
+\code{"equal"} (legacy default), \code{"trace"} (scale components by their
+covariance contributions), \code{"moments"} (nonnegative residual moment
+regression), or \code{"random"} (randomly perturb trace-scaled starts).
+The moment estimator is for \strong{initialization only}, not a separate PET.}
+
+\item{stop_rule}{\code{"parameter"} (backward-compatible default), \code{"kkt"},
+or \code{"both"}. KKT stopping uses a scale-adjusted score residual.}
+
+\item{kkt_tol}{Scaled KKT tolerance, default \code{sqrt(tol)}. Applies when
+\code{stop_rule} includes KKT. Always reports diagnostics regardless.}
+
+\item{boundary_tol}{Nonnegative relative threshold for classifying an
+estimated variance component as approximately zero in KKT checks.
+This does not project coefficients or modify the EM/MM updates.}
 }
 \value{
 An experimental \code{mrvcr_vcm_em} object (legacy class name retained
 for S3 compatibility even for MM fits) with GLS coefficients,
 fitted values, residuals, component estimates, rank information,
-log likelihood, convergence diagnostics, and the likelihood trajectory.
+log likelihood, exact profile score, raw and scaled KKT violations,
+approximate-boundary flags, initialization metadata, stopping diagnostics,
+and the likelihood trajectory. The scale-adjusted KKT diagnostic uses the per-component divisor
+\code{1 + (abs(q[k]) + abs(t[k])) / 2}; its tolerance is not an unscaled score
+tolerance. Parameter-only convergence does not certify KKT stationarity.
 }
 \description{
 Fits \verb{Y ~ N(X beta, Sigma)} where \verb{Sigma = sum_k theta[k] * kernels[[k]]}.

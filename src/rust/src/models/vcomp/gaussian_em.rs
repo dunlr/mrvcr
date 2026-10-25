@@ -112,11 +112,51 @@ fn component_score(state: &State, kernel: &Mat<f64>) -> (f64, f64) {
     (quadratic, trace)
 }
 
+// The raw score is d log L / d theta_k = 0.5 * (q_k - t_k).
+// At an interior KKT maximum it is zero; at theta_k == 0 it is <= 0.
+// The scaled diagnostic divides by a term on the natural q/t scale,
+// allowing kernels of very different magnitudes to be compared.
+struct Diagnostics {
+    quadratic_trace: Vec<(f64, f64)>,
+    score: Vec<f64>,
+    raw_kkt: f64,
+    scaled_kkt: f64,
+    on_boundary: Vec<bool>,
+}
+
+fn diagnostics(state: &State, kernels: &[Mat<f64>], theta: &[f64],
+               boundary_tol: f64) -> Diagnostics {
+    let theta_scale = theta.iter().copied().fold(0.0_f64, f64::max);
+    let threshold = boundary_tol * (1.0 + theta_scale);
+    let mut quadratic_trace = Vec::with_capacity(kernels.len());
+    let mut score = Vec::with_capacity(kernels.len());
+    let mut on_boundary = Vec::with_capacity(kernels.len());
+    let mut raw_kkt = 0.0_f64;
+    let mut scaled_kkt = 0.0_f64;
+    for (k, kernel) in kernels.iter().enumerate() {
+        let (q, tr) = component_score(state, kernel);
+        let s = 0.5 * (q - tr);
+        let boundary = theta[k] <= threshold;
+        let violation = if boundary { s.max(0.0) } else { s.abs() };
+        // Normalization reduces (but does not eliminate) sensitivity to kernel
+    // scaling because the stabilizing +1 fixes a reference scale.
+        let scaled = violation / (1.0 + 0.5 * (q.abs() + tr.abs()));
+        quadratic_trace.push((q, tr));
+        score.push(s);
+        on_boundary.push(boundary);
+        raw_kkt = raw_kkt.max(violation);
+        scaled_kkt = scaled_kkt.max(scaled);
+    }
+    Diagnostics {quadratic_trace, score, raw_kkt, scaled_kkt, on_boundary}
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn ffi_fit_em(y_obj: Robj, x_obj: Robj, kernel_array: Robj,
                   kernel_ranks: Robj, theta_obj: Robj,
                   pet_str: &str, method_str: &str,
-                  max_iter: i32, tol: f64) -> extendr_api::Result<List> {
+                  max_iter: i32, tol: f64,
+                  stop_rule_str: &str, kkt_tol: f64, boundary_tol: f64)
+                  -> extendr_api::Result<List> {
     let pet = Pet::try_from(pet_str)?;
     let restricted = match pet {
         Pet::Reml => true,
@@ -159,24 +199,59 @@ pub fn ffi_fit_em(y_obj: Robj, x_obj: Robj, kernel_array: Robj,
         Mat::<f64>::from_fn(n, n, |i,j| kernel_data[k*n*n + i + n*j])
     }).collect();
     // PSD/rank checks are performed on the R side using symmetric eigensystems.
+    // Preserve the legacy parameter-change stopping criterion by default.
+    // KKT diagnostics are evaluated using the exact likelihood score, not
+    // surrogate gradients. No optimizer update is changed by this iteration.
+    let stop_rule = match stop_rule_str.to_ascii_lowercase().as_str() {
+        "parameter" => "parameter",
+        "kkt" => "kkt",
+        "both" => "both",
+        _ => return Err(fail("stop_rule must be 'parameter', 'kkt', or 'both'.")),
+    };
+    if !kkt_tol.is_finite() || kkt_tol <= 0.0 ||
+       !boundary_tol.is_finite() || boundary_tol < 0.0 {
+        return Err(fail("kkt_tol must be positive and finite; boundary_tol must be nonnegative and finite."));
+    }
     let mut theta = theta_initial.to_vec();
     let mut state = evaluate(y, &x, &kernels, &theta, restricted)?;
     let mut likelihood_path = vec![state.loglik];
     let mut converged = false;
     let mut iterations = 0usize;
     let mut final_relative_change = f64::INFINITY;
-    for iter in 1..=(max_iter as usize) {
+    let mut final_relative_likelihood_change = f64::INFINITY;
+    let mut final_diag;
+    let mut convergence_reason = "max_iter";
+
+    // Diagnostics at the start of each iteration become the final diagnostics
+    // without an additional likelihood factorization at termination.
+    loop {
+        final_diag = diagnostics(&state, &kernels, &theta, boundary_tol);
+        if !final_diag.scaled_kkt.is_finite() {
+            return Err(fail("Nonfinite variance-component score/KKT diagnostic."));
+        }
+        let param_ok = iterations > 0 && final_relative_change < tol;
+        let kkt_ok = final_diag.scaled_kkt <= kkt_tol;
+        converged = match stop_rule {
+            "parameter" => param_ok,
+            "kkt" => kkt_ok,
+            _ => param_ok && kkt_ok,
+        };
+        if converged {
+            convergence_reason = match stop_rule {
+                "parameter" => "parameter",
+                "kkt" => "kkt",
+                _ => "both",
+            };
+            break;
+        }
+        if iterations >= max_iter as usize { break; }
         let mut next = theta.clone();
         for k in 0..m {
-            let (q, tr) = component_score(&state, &kernels[k]);
+            let (q, tr) = final_diag.quadratic_trace[k];
             if use_mm {
-                // Zhou et al.: maximize the separable MM minorizer
-                //   -0.5 * (theta_new * tr + theta_old^2 * q / theta_new).
-                // The numerator is nonnegative for PSD kernels, and the
-                // denominator is positive for a nonzero PSD kernel and P>0
-                // on its effective subspace (for REML: after projection).
-                // In particular, REML kernels entirely in col(X) have zero
-                // information and must be rejected rather than divided by 0.
+                // Zhou et al. (2019), Equation (8): separable MM minorizer.
+                // A zero projected REML kernel is unidentifiable and cannot
+                // be updated by this multiplicative formula.
                 let tr_scale = 1.0 + tr.abs();
                 let q_scale = 1.0 + q.abs();
                 if !tr.is_finite() || tr <= 1e-12 * tr_scale {
@@ -189,15 +264,11 @@ pub fn ffi_fit_em(y_obj: Robj, x_obj: Robj, kernel_array: Robj,
                         "MM numerator for kernel {} is negative or nonfinite; check PSD kernels and numerical conditioning.", k+1
                     )));
                 }
-                // Clamp tiny negative quadratic forms caused by roundoff.
                 next[k] = theta[k] * (q.max(0.0) / tr).sqrt();
             } else {
-                // Latent Gaussian EM M-step:
-                // E[u_k' u_k] = theta*r - theta^2*tr + theta^2*q.
+                // Latent Gaussian EM M-step; retain the existing equation.
                 let expectation = theta[k] * ((ranks[k] as f64) - theta[k] * tr)
                     + theta[k] * theta[k] * q;
-                // Tiny negative values caused by roundoff are projected
-                // to the boundary, as in the original EM implementation.
                 next[k] = (expectation / (ranks[k] as f64)).max(0.0);
             }
             if !next[k].is_finite() {
@@ -205,20 +276,38 @@ pub fn ffi_fit_em(y_obj: Robj, x_obj: Robj, kernel_array: Robj,
                     if use_mm { "MM" } else { "EM" }, k+1)));
             }
         }
+        // A proposed boundary update can make Sigma singular. Backtrack
+        // toward the previous feasible iterate, also safeguarding against
+        // loss of monotonicity from finite precision. This is inactive when
+        // the original EM/MM step is feasible and ascends.
+        let mut candidate = next;
+        let mut accepted: Option<(Vec<f64>, State)> = None;
+        let slack = 1e-9 * (1.0 + state.loglik.abs());
+        for _ in 0..=25 {
+            if let Ok(next_state) = evaluate(y, &x, &kernels, &candidate, restricted) {
+                if next_state.loglik + slack >= state.loglik {
+                    accepted = Some((candidate, next_state));
+                    break;
+                }
+            }
+            candidate = theta.iter().zip(candidate.iter())
+                .map(|(old, proposed)| old + 0.5 * (proposed - old))
+                .collect();
+        }
+        let (next, next_state) = accepted.ok_or_else(|| fail(
+            "VCM step was not feasible/monotone after backtracking; inspect kernel identifiability and conditioning."
+        ))?;
         final_relative_change = theta.iter().zip(next.iter())
             .map(|(a,b)| (a-b).abs() / (1.0+a.abs())).fold(0.0_f64, f64::max);
-        let next_state = evaluate(y, &x, &kernels, &next, restricted)?;
-        let slack = 1e-9 * (1.0 + state.loglik.abs());
-        if next_state.loglik + slack < state.loglik {
-            return Err(fail(format!("{} likelihood decreased beyond rounding tolerance; check kernel PSD/rank or conditioning.",
-                if use_mm { "MM" } else { "EM" })));
-        }
+        final_relative_likelihood_change = (next_state.loglik - state.loglik).abs()
+            / (1.0 + state.loglik.abs());
         theta = next;
         state = next_state;
         likelihood_path.push(state.loglik);
-        iterations = iter;
-        if final_relative_change < tol { converged = true; break; }
+        iterations += 1;
     }
+    let param_ok = iterations > 0 && final_relative_change < tol;
+    let kkt_ok = final_diag.scaled_kkt <= kkt_tol;
     Ok(list!(
         coefficients = state.beta,
         variance_components = theta,
@@ -229,6 +318,17 @@ pub fn ffi_fit_em(y_obj: Robj, x_obj: Robj, kernel_array: Robj,
         converged = converged,
         iterations = iterations as i32,
         relative_change = final_relative_change,
+        relative_loglik_change = final_relative_likelihood_change,
+        score = final_diag.score,
+        kkt_violation = final_diag.raw_kkt,
+        kkt_violation_scaled = final_diag.scaled_kkt,
+        boundary_components = final_diag.on_boundary,
+        converged_parameters = param_ok,
+        converged_kkt = kkt_ok,
+        convergence_reason = convergence_reason,
+        stop_rule = stop_rule,
+        kkt_tol = kkt_tol,
+        boundary_tol = boundary_tol,
         pet = if restricted { "REML" } else { "MLE" },
         method = if use_mm { "MM" } else { "EM" }
     ))

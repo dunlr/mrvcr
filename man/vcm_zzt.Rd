@@ -14,7 +14,11 @@ vcm_zzt(
   max_iter = 500L,
   tol = 1e-07,
   model = TRUE,
-  x = FALSE
+  x = FALSE,
+  init = "equal",
+  stop_rule = "parameter",
+  kkt_tol = sqrt(tol),
+  boundary_tol = 1e-08
 )
 }
 \arguments{
@@ -39,6 +43,19 @@ vcm_zzt(
 \item{model}{Whether to retain the fixed-effects model frame.}
 
 \item{x}{Whether to retain the fixed-effects design matrix.}
+
+\item{init}{Initialization strategy when \code{theta_init} is omitted; forwarded
+to \code{\link[=vcm]{vcm()}}.}
+
+\item{stop_rule}{Convergence rule: \code{"parameter"} (default), \code{"kkt"}, or
+\code{"both"}. Forwarded to \code{\link[=vcm]{vcm()}}.}
+
+\item{kkt_tol}{Positive tolerance for the scale-adjusted KKT diagnostic;
+defaults to \code{sqrt(tol)}. Forwarded to \code{\link[=vcm]{vcm()}}.}
+
+\item{boundary_tol}{Nonnegative relative threshold used to identify
+approximately zero components in the KKT diagnostic. It does not
+modify the EM/MM update. Forwarded to \code{\link[=vcm]{vcm()}}.}
 }
 \value{
 An \code{mrvcr_vcm_em} object returned by \code{\link[=vcm]{vcm()}}.

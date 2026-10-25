@@ -26,6 +26,15 @@
 #'   (random effect and residual, respectively).
 #' @param max_iter Maximum EM/MM iterations.
 #' @param tol Positive convergence tolerance.
+#' @param init Initialization strategy when `theta_init` is omitted; forwarded
+#'   to [vcm()].
+#' @param stop_rule Convergence rule: `"parameter"` (default), `"kkt"`, or
+#'   `"both"`. Forwarded to [vcm()].
+#' @param kkt_tol Positive tolerance for the scale-adjusted KKT diagnostic;
+#'   defaults to `sqrt(tol)`. Forwarded to [vcm()].
+#' @param boundary_tol Nonnegative relative threshold used to identify
+#'   approximately zero components in the KKT diagnostic. It does not
+#'   modify the EM/MM update. Forwarded to [vcm()].
 #' @param model Whether to retain the fixed-effects model frame.
 #' @param x Whether to retain the fixed-effects design matrix.
 #' @return An `mrvcr_vcm_em` object returned by [vcm()].
@@ -34,7 +43,9 @@
 vcm_zzt <- function(formula, random_formula, data = parent.frame(),
                     pet = "REML", method = "MM", theta_init = NULL,
                     max_iter = 500L, tol = 1e-7,
-                    model = TRUE, x = FALSE) {
+                    model = TRUE, x = FALSE,
+                    init = "equal", stop_rule = "parameter", kkt_tol = sqrt(tol),
+                    boundary_tol = 1e-8) {
   if (!is.character(method) || length(method) != 1L || is.na(method) ||
       !toupper(method) %in% c("EM", "MM")) {
     stop("'method' must be 'EM' or 'MM'.", call. = FALSE)
@@ -72,6 +83,10 @@ vcm_zzt <- function(formula, random_formula, data = parent.frame(),
     theta_init = theta_init,
     max_iter = max_iter,
     tol = tol,
+    init = init,
+    stop_rule = stop_rule,
+    kkt_tol = kkt_tol,
+    boundary_tol = boundary_tol,
     model = model,
     x = x
   )
