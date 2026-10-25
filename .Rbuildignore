@@ -8,6 +8,7 @@
 ^[.]Rprofile$
 
 ^README[.]Rmd$
+^README[.]qmd$
 ^README[.]html$
 ^README_files$
 

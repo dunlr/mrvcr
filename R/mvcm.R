@@ -1,4 +1,9 @@
 #' Multivariate Response Variance Component model
+#' @param formula Multivariate-response regression formula, e.g. `cbind(y1, y2) ~ x`.
+#' @param data A data frame or environment containing model variables.
+#' @param pet Requested estimation criterion; the present Rust engine performs
+#'   only ordinary least squares, not variance-component ML/REML estimation.
+#'
 #' @export
 mvcm <- function(formula, data = parent.frame(), pet = "MLE") {
   # 1. Process formula elements
@@ -16,20 +21,17 @@ mvcm <- function(formula, data = parent.frame(), pet = "MLE") {
     Y_matrix <- as.matrix(Y_matrix)
   }
 
-  nr <- as.integer(nrow(X))
-  n_resp <- as.integer(ncol(Y_matrix))
-  nc <- as.integer(ncol(X))
+  nc <- ncol(X)
+  n_resp <- ncol(Y_matrix)
 
-  # 2. Hand off flattened column-major vectors straight to Rust
-  fit_output <- .Call(
-    wrap__mvcm_fit_rust,
-    as.numeric(Y_matrix),
-    as.numeric(X),
-    nr,
-    n_resp,
-    nc,
-    as.character(pet)
-  )
+  # Current 3-argument extendr wrapper accepts R matrices directly.
+  fit_output <- mvcm_fit_rust(Y_matrix, X, as.character(pet))
+  if (identical(fit_output$engine, "faer-multivariate-ols-baseline")) {
+    warning(
+      "mvcm currently computes an unpenalized multivariate OLS baseline; variance components are not estimated.",
+      call. = FALSE
+    )
+  }
 
   # 3. Reshape flat coefficient arrays back to an R matrix structural block
   coef_matrix <- matrix(

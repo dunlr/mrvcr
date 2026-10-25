@@ -12,6 +12,17 @@ vcm_zzt(
   method = "MM"
 )
 }
+\arguments{
+\item{formula}{Fixed-effects regression formula.}
+
+\item{random_formula}{One-sided formula defining a random-effects design matrix.}
+
+\item{data}{A data frame or environment containing model variables.}
+
+\item{pet}{Estimation criterion (\code{"MLE"} or \code{"REML"}).}
+
+\item{method}{Numerical method, currently only the incomplete \code{"MM"} prototype.}
+}
 \description{
 Variance Component Model with variance kernels V_i = Z_i \%*\% Z_i^T
 }

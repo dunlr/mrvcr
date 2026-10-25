@@ -3,6 +3,31 @@
 #' This intentionally shadows stats::glm when mrvcr is attached.
 #' The returned object inherits from c("glm", "lm"), so base R S3 methods are used.
 #'
+#' @param formula A model formula, as in [stats::glm()].
+#' @param family An R family object, family constructor, or family name. Native
+#'   family and link support is validated by the Rust backend.
+#' @param data An optional data frame, list, or environment containing variables.
+#' @param weights Optional prior weights.
+#' @param subset An optional expression selecting observations.
+#' @param na.action A missing-value handling function.
+#' @param start Optional starting coefficients; currently delegated to [stats::glm()].
+#' @param etastart Optional initial linear predictor; currently delegated to [stats::glm()].
+#' @param mustart Optional initial fitted mean; currently delegated to [stats::glm()].
+#' @param offset Optional offset added to the linear predictor.
+#' @param control A list of standard GLM control parameters.
+#' @param model Whether to retain the model frame in the result.
+#' @param method Standard fitting entry-point name; only `"glm.fit"` uses Rust.
+#' @param x Whether to retain the model matrix.
+#' @param y Whether to retain the response.
+#' @param singular.ok Whether a rank-deficient design is permitted.
+#' @param contrasts Optional factor contrasts for the model matrix.
+#' @param ... Additional backend controls (e.g. `pet`, `rust_method`, `param`,
+#'   `se`) and GLM control arguments. Set `se = TRUE` to additionally compute
+#'   the unscaled Fisher-information covariance in Rust (full-rank fits only).
+#'   Standard [stats::summary.glm()] and [stats::vcov()] remain available
+#'   without this optional calculation using the stored weighted QR object.
+#'
+#' @importFrom stats gaussian
 #' @export
 glm <- function(formula, family = gaussian, data, weights, subset,
                 na.action, start = NULL, etastart, mustart, offset,
@@ -14,9 +39,17 @@ glm <- function(formula, family = gaussian, data, weights, subset,
 
   pet <- if (!is.null(dots$pet)) dots$pet else "MLE"
   rust_method <- if (!is.null(dots$rust_method)) dots$rust_method else "FisherScoring"
-  param <- if (!is.null(dots$param)) dots$param else 0
+  # A family object is the source of truth. Parameterized families expose
+  # their parameters inside the variance function closure (MASS / statmod).
+  # No duplicate list of Rust-supported families or links is maintained in R.
+  param <- if (!is.null(dots$param)) {
+    as.numeric(dots$param)
+  } else {
+    NULL
+  }
 
-  backend_arg_names <- c("pet", "rust_method", "param")
+  backend_arg_names <- c("pet", "rust_method", "param", "se")
+  calc_se <- isTRUE(dots$se)
 
   if (missing(control)) {
     control <- dots[setdiff(names(dots), backend_arg_names)]
@@ -30,9 +63,45 @@ glm <- function(formula, family = gaussian, data, weights, subset,
     family <- family()
   }
 
-  if (is.null(family$family)) {
-    print(family)
-    stop("'family' not recognized", call. = FALSE)
+  if (!inherits(family, "family") || length(family$family) != 1L ||
+      length(family$link) != 1L) {
+    stop("'family' must be a valid R family object", call. = FALSE)
+  }
+
+  # Extract only the scalar distribution parameter required by the Rust ABI.
+  # Unsupported family/link names are rejected by Rust enum pattern matching.
+  family_name <- as.character(family$family)
+  if (is.null(param)) {
+    venv <- environment(family$variance)
+    if (startsWith(tolower(family_name), "negative binomial(") &&
+        is.environment(venv) &&
+        exists(".Theta", envir = venv, inherits = FALSE)) {
+      param <- get(".Theta", envir = venv, inherits = FALSE)
+    } else if (identical(tolower(family_name), "tweedie") &&
+               is.environment(venv) &&
+               exists("p", envir = venv, inherits = FALSE)) {
+      param <- get("p", envir = venv, inherits = FALSE)
+    } else {
+      param <- 0
+    }
+  }
+  if (!is.numeric(param) || length(param) != 1L || !is.finite(param)) {
+    stop("Family parameter 'param' must be a finite numeric scalar", call. = FALSE)
+  }
+
+  # Guard against accidentally passing one variance parameter to R and
+  # a different one to Rust (important for correct deviance and inference).
+  if (startsWith(tolower(family_name), "negative binomial(") &&
+      is.finite(param)) {
+    actual_var <- family$variance(1)
+    expected_var <- 1 + 1 / param
+    if (!isTRUE(all.equal(actual_var, expected_var, tolerance = 1e-10))) {
+      stop("Negative binomial 'param' differs from family theta", call. = FALSE)
+    }
+  } else if (identical(tolower(family_name), "tweedie")) {
+    if (!isTRUE(all.equal(family$variance(2), 2^param, tolerance = 1e-10))) {
+      stop("Tweedie 'param' differs from family var.power", call. = FALSE)
+    }
   }
 
   if (!identical(method, "glm.fit")) {
@@ -76,25 +145,34 @@ glm <- function(formula, family = gaussian, data, weights, subset,
   mt <- attr(mf, "terms")
   Y <- stats::model.response(mf, "any")
 
-  if (is.matrix(Y) && NCOL(Y) > 1L) {
-    cal[[1L]] <- quote(stats::glm)
-    warning(
-      "mrvcr::glm does not yet support matrix/binomial two-column responses; using stats::glm().",
-      call. = FALSE
-    )
-    return(eval(cal, parent.frame()))
+  # Extract the response once. Two-column binomial outcomes are converted to
+  # proportions with trial counts as prior weights (stats::glm convention).
+  trials <- NULL
+  if (is.matrix(Y) && NCOL(Y) == 2L && identical(family_name, "binomial")) {
+    if (!is.numeric(Y) || any(!is.finite(Y)) || any(Y < 0) ||
+        any(Y != floor(Y))) {
+      stop("Two-column binomial responses need nonnegative integer counts", call. = FALSE)
+    }
+    trials <- rowSums(Y)
+    Y <- ifelse(trials > 0, Y[, 1L] / pmax(trials, 1), 0)
+  } else if (is.matrix(Y) && NCOL(Y) > 1L) {
+    stop("Matrix-valued GLM responses are not implemented for this family", call. = FALSE)
+  }
+
+  if (is.factor(Y)) {
+    if (!identical(family_name, "binomial") || nlevels(Y) != 2L) {
+      stop("Factor-valued responses are supported only for binary binomial GLMs", call. = FALSE)
+    }
+    Y <- as.numeric(Y) - 1
   }
 
   if (length(dim(Y)) == 1L) {
-    nm <- rownames(Y)
+    nm <- names(Y)
     dim(Y) <- NULL
-
-    if (!is.null(nm)) {
-      names(Y) <- nm
-    }
+    if (!is.null(nm)) names(Y) <- nm
   }
 
-  X <- if (!is.empty.model(mt)) {
+  X <- if (!stats::is.empty.model(mt)) {
     stats::model.matrix(mt, mf, contrasts)
   } else {
     matrix(, NROW(Y), 0L)
@@ -106,8 +184,18 @@ glm <- function(formula, family = gaussian, data, weights, subset,
     stop("'weights' must be a numeric vector", call. = FALSE)
   }
 
+  if (!is.null(w) && any(!is.finite(w))) {
+    stop("weights must be finite", call. = FALSE)
+  }
   if (!is.null(w) && any(w < 0)) {
     stop("negative weights not allowed", call. = FALSE)
+  }
+  if (!is.null(trials)) {
+    w <- if (is.null(w)) trials else w * trials
+  }
+  if (identical(family_name, "binomial") &&
+      (any(!is.finite(Y)) || any(Y < 0 | Y > 1))) {
+    stop("binomial responses must be proportions in [0, 1]", call. = FALSE)
   }
 
   offset_vec <- as.vector(stats::model.offset(mf))
@@ -130,7 +218,7 @@ glm <- function(formula, family = gaussian, data, weights, subset,
     X,
     w,
     offset_vec,
-    as.character(family$family),
+    family_name,
     as.character(family$link),
     as.character(pet),
     as.character(rust_method),
@@ -138,15 +226,50 @@ glm <- function(formula, family = gaussian, data, weights, subset,
     as.integer(control$maxit),
     as.numeric(control$epsilon),
     as.logical(singular.ok),
-    FALSE
+    calc_se
   )
+
+  # The Rust calculation is opt-in: covariance is O(p^2) in memory and
+  # is returned unscaled because the dispersion can depend on the R family.
+  # For rank-deficient designs, the native routine deliberately returns NULL
+  # instead of pretending the information matrix is invertible.
+  if (isTRUE(fit_rust$covariance_available)) {
+    p_cov <- ncol(X)
+    if (length(fit_rust$vcov_unscaled) != p_cov * p_cov) {
+      stop("Rust GLM covariance has incorrect dimensions", call. = FALSE)
+    }
+    fit_rust$vcov_unscaled <- matrix(
+      fit_rust$vcov_unscaled,
+      nrow = p_cov, ncol = p_cov,
+      dimnames = list(colnames(X), colnames(X))
+    )
+  } else {
+    fit_rust$vcov_unscaled <- NULL
+  }
+
+  if (!isTRUE(fit_rust$converged)) {
+    warning("mrvcr::glm: Fisher scoring did not converge within maxit iterations",
+            call. = FALSE)
+  }
 
   coefficients <- fit_rust$coefficients
   names(coefficients) <- colnames(X) %||% paste0("x", seq_along(coefficients))
 
   fitted_values <- fit_rust$fitted_values
   linear_predictors <- fit_rust$linear_predictors
-  residual_values <- fit_rust$residuals
+  # `glm.fit()` stores IRLS *working* residuals, not response residuals,
+  # in the fitted glm object's $residuals field:
+  #   (y - mu) / (d mu / d eta).
+  # summary.glm() uses these working residuals together with the final
+  # working weights to estimate dispersion. Storing y - mu here instead
+  # makes standard errors and Wald tests wrong for non-identity links.
+  # The Rust response residuals remain accessible as fit$rust$residuals.
+  mu_eta <- family$mu.eta(linear_predictors)
+  if (!is.numeric(mu_eta) || length(mu_eta) != length(fitted_values)) {
+    stop("'family$mu.eta' must return one numeric derivative per observation",
+         call. = FALSE)
+  }
+  residual_values <- fit_rust$residuals / mu_eta
 
   names(fitted_values) <- rownames(mf)
   names(linear_predictors) <- rownames(mf)
@@ -182,7 +305,8 @@ glm <- function(formula, family = gaussian, data, weights, subset,
     fitted.values = fitted_values,
     weights = prior_weights,
     deviance = deviance,
-    rank = rank
+    rank = rank,
+    trials = trials
   )
 
   fit <- list(

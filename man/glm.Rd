@@ -25,6 +25,48 @@ glm(
   ...
 )
 }
+\arguments{
+\item{formula}{A model formula, as in \code{\link[stats:glm]{stats::glm()}}.}
+
+\item{family}{An R family object, family constructor, or family name. Native
+family and link support is validated by the Rust backend.}
+
+\item{data}{An optional data frame, list, or environment containing variables.}
+
+\item{weights}{Optional prior weights.}
+
+\item{subset}{An optional expression selecting observations.}
+
+\item{na.action}{A missing-value handling function.}
+
+\item{start}{Optional starting coefficients; currently delegated to \code{\link[stats:glm]{stats::glm()}}.}
+
+\item{etastart}{Optional initial linear predictor; currently delegated to \code{\link[stats:glm]{stats::glm()}}.}
+
+\item{mustart}{Optional initial fitted mean; currently delegated to \code{\link[stats:glm]{stats::glm()}}.}
+
+\item{offset}{Optional offset added to the linear predictor.}
+
+\item{control}{A list of standard GLM control parameters.}
+
+\item{model}{Whether to retain the model frame in the result.}
+
+\item{method}{Standard fitting entry-point name; only \code{"glm.fit"} uses Rust.}
+
+\item{x}{Whether to retain the model matrix.}
+
+\item{y}{Whether to retain the response.}
+
+\item{singular.ok}{Whether a rank-deficient design is permitted.}
+
+\item{contrasts}{Optional factor contrasts for the model matrix.}
+
+\item{...}{Additional backend controls (e.g. \code{pet}, \code{rust_method}, \code{param},
+\code{se}) and GLM control arguments. Set \code{se = TRUE} to additionally compute
+the unscaled Fisher-information covariance in Rust (full-rank fits only).
+Standard \code{\link[stats:summary.glm]{stats::summary.glm()}} and \code{\link[stats:vcov]{stats::vcov()}} remain available
+without this optional calculation using the stored weighted QR object.}
+}
 \description{
 This intentionally shadows stats::glm when mrvcr is attached.
 The returned object inherits from c("glm", "lm"), so base R S3 methods are used.

@@ -19,24 +19,42 @@ enum Link {
     Log,
     Logit,
     Inverse,
+    Probit,
+    Cloglog,
+    Loglog,
+    Cauchit,
 }
 
 impl TryFrom<&str> for Link {
     type Error = extendr_api::Error;
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
-        let key = s.trim().to_ascii_lowercase();
-
-        match key.as_str() {
+        match s.trim().to_ascii_lowercase().as_str() {
             "identity" => Ok(Self::Identity),
-            "log" => Ok(Self::Log),
+            "log" | "mu^0" => Ok(Self::Log), // statmod::tweedie(log link)
             "logit" => Ok(Self::Logit),
             "inverse" => Ok(Self::Inverse),
+            "probit" => Ok(Self::Probit),
+            "cloglog" => Ok(Self::Cloglog),
+            "loglog" => Ok(Self::Loglog),
+            "cauchit" => Ok(Self::Cauchit),
             _ => Err(extendr_api::Error::Other(format!(
-                "Unknown link: {s}. Expected identity, log, logit, or inverse."
+                "GLM link '{s}' is not implemented in Rust. Supported: identity, log, logit, inverse, probit, cloglog, loglog, cauchit (and mu^0)."
             ))),
         }
     }
+}
+
+// Abramowitz-Stegun approximation, max absolute error approximately 7.5e-8.
+// Used only for the inverse-probit link; no R callbacks in the numeric loop.
+fn standard_normal_cdf(z: f64) -> f64 {
+    let a = z.abs();
+    let t = 1.0 / (1.0 + 0.2316419 * a);
+    let upper = (-0.5 * a * a).exp() / (2.0 * std::f64::consts::PI).sqrt()
+        * t
+        * (0.319381530 + t * (-0.356563782 + t * (1.781477937
+           + t * (-1.821255978 + t * 1.330274429))));
+    if z >= 0.0 { 1.0 - upper } else { upper }
 }
 
 impl Link {
@@ -53,29 +71,37 @@ impl Link {
                 }
             }
             Self::Inverse => 1.0 / eta,
+            Self::Probit => standard_normal_cdf(eta),
+            Self::Cloglog => -(-eta.exp()).exp_m1(),
+            Self::Loglog => (-(-eta).exp()).exp(),
+            Self::Cauchit => 0.5 + eta.atan() / std::f64::consts::PI,
         }
     }
 
-    fn derivative(self, mu: f64) -> f64 {
-        let eps = 1e-12;
-
+    // d mu / d eta. Numerically preferable to computing g'(mu) for tail links.
+    fn mu_eta(self, eta: f64) -> f64 {
         match self {
             Self::Identity => 1.0,
-            Self::Log => 1.0 / mu.max(eps),
+            Self::Log => eta.exp(),
             Self::Logit => {
-                let m = mu.clamp(eps, 1.0 - eps);
-                1.0 / (m * (1.0 - m))
+                let mu = self.inverse(eta);
+                mu * (1.0 - mu)
             }
-            Self::Inverse => -1.0 / (mu * mu),
+            Self::Inverse => -1.0 / (eta * eta),
+            Self::Probit => (-0.5 * eta * eta).exp()
+                / (2.0 * std::f64::consts::PI).sqrt(),
+            Self::Cloglog => (eta - eta.exp()).exp(),
+            Self::Loglog => (-eta - (-eta).exp()).exp(),
+            Self::Cauchit => 1.0 / (std::f64::consts::PI * (1.0 + eta * eta)),
         }
     }
 
     fn clamp_mu(self, mu: f64) -> f64 {
-        let eps = 1e-12;
-
+        const EPS: f64 = 1e-12;
         match self {
-            Self::Logit => mu.clamp(eps, 1.0 - eps),
-            Self::Log | Self::Inverse => mu.max(eps),
+            Self::Logit | Self::Probit | Self::Cloglog | Self::Loglog | Self::Cauchit =>
+                mu.clamp(EPS, 1.0 - EPS),
+            Self::Log | Self::Inverse => mu.max(EPS),
             Self::Identity => mu,
         }
     }
@@ -119,8 +145,17 @@ impl Family {
                 }
             }
 
+            _ if key.starts_with("negative binomial(") => {
+                if param <= 0.0 || !param.is_finite() {
+                    Err(extendr_api::Error::Other(
+                        "Negative binomial requires a positive theta from its R family object or 'param'.".to_string(),
+                    ))
+                } else {
+                    Ok(Self::NegativeBinomial { theta: param })
+                }
+            }
             _ => Err(extendr_api::Error::Other(format!(
-                "Unknown family: {s}. Expected gaussian, poisson, binomial, nb, or tweedie."
+                "GLM family '{s}' is not implemented in Rust. Supported: gaussian, poisson, binomial, negative binomial (fixed theta), tweedie (fixed variance power)."
             ))),
         }
     }
@@ -173,31 +208,120 @@ fn check_weights(weights: &[f64]) -> extendr_api::Result<()> {
     Ok(())
 }
 
+// Pivoted QR is more robust than unpivoted QR for weighted/near-singular
+// working design matrices. This deliberately follows the LM backend's
+// rank-detection convention without constructing X'WX.
 fn solve_weighted_least_squares_qr(
     x: &Mat<f64>,
     z: &Mat<f64>,
     weights: &[f64],
+    singular_ok: bool,
 ) -> extendr_api::Result<Mat<f64>> {
+    use extendr_api::Error;
+
     let n = x.nrows();
     let p = x.ncols();
-
     let mut x_work = Mat::<f64>::zeros(n, p);
     let mut z_work = Mat::<f64>::zeros(n, 1);
 
     for i in 0..n {
         let sw = weights[i].sqrt();
-
+        // A zero-weight observation must contribute nothing even if its
+        // working response is undefined. The caller supplies z=0 for those rows.
         z_work[(i, 0)] = z[(i, 0)] * sw;
-
         for j in 0..p {
             x_work[(i, j)] = x[(i, j)] * sw;
         }
     }
 
-    let beta = x_work.qr().solve_lstsq(&z_work);
-    check_all_finite(&beta, "estimated coefficients")?;
+    // faer supports this factorization elsewhere in mrvcr::lm.
+    let decomp = x_work.col_piv_qr();
+    let r = decomp.R();
+    let ndiag = n.min(p);
+    let mut maxdiag = 0.0_f64;
+    for j in 0..ndiag {
+        maxdiag = maxdiag.max(r[(j, j)].abs());
+    }
+    let mut rank = 0usize;
+    if maxdiag.is_finite() && maxdiag > 0.0 {
+        for j in 0..ndiag {
+            if r[(j, j)].abs() > 1.0e-10 * maxdiag {
+                rank += 1;
+            }
+        }
+    }
+    if !singular_ok && rank < p {
+        return Err(Error::Other(format!(
+            "singular fit encountered: weighted design rank {rank} < {p} columns"
+        )));
+    }
 
+    let beta = decomp.solve_lstsq(&z_work);
+    check_all_finite(&beta, "estimated coefficients")?;
     Ok(beta)
+}
+
+// Unit deviances for the implemented GLM families. For Tweedie, these are
+// exponential-dispersion/quasi-deviances with the variance power held fixed.
+// They do not estimate dispersion, NB theta, or Tweedie power.
+fn unit_deviance(y: f64, mu: f64, family: Family) -> f64 {
+    match family {
+        Family::Gaussian => (y - mu) * (y - mu),
+        Family::Poisson => {
+            let log_term = if y > 0.0 { y * (y / mu).ln() } else { 0.0 };
+            2.0 * (log_term - (y - mu))
+        }
+        Family::Binomial => {
+            let a = if y > 0.0 { y * (y / mu).ln() } else { 0.0 };
+            let b = if y < 1.0 {
+                (1.0 - y) * ((1.0 - y) / (1.0 - mu)).ln()
+            } else {
+                0.0
+            };
+            2.0 * (a + b)
+        }
+        Family::NegativeBinomial { theta } => {
+            let a = if y > 0.0 { y * (y / mu).ln() } else { 0.0 };
+            2.0 * (a - (y + theta) * ((y + theta) / (mu + theta)).ln())
+        }
+        Family::Tweedie { power } if power == 0.0 => (y - mu) * (y - mu),
+        Family::Tweedie { power } if power == 1.0 =>
+            unit_deviance(y, mu, Family::Poisson),
+        Family::Tweedie { power } if power == 2.0 => {
+            if y <= 0.0 { f64::INFINITY }
+            else { 2.0 * (y / mu - (y / mu).ln() - 1.0) }
+        }
+        Family::Tweedie { power } => {
+            let a = y.powf(2.0 - power) / ((1.0 - power) * (2.0 - power));
+            let b = -y * mu.powf(1.0 - power) / (1.0 - power);
+            let c = mu.powf(2.0 - power) / (2.0 - power);
+            2.0 * (a + b + c)
+        }
+    }
+}
+
+fn weighted_deviance(
+    y: &Mat<f64>,
+    x: &Mat<f64>,
+    beta: &Mat<f64>,
+    offset: &[f64],
+    prior_weights: &[f64],
+    family: Family,
+    link: Link,
+) -> f64 {
+    let eta = x * beta;
+    let mut value = 0.0;
+    for i in 0..x.nrows() {
+        if prior_weights[i] == 0.0 { continue; }
+        let linear = eta[(i, 0)] + offset[i];
+        if !linear.is_finite() { return f64::INFINITY; }
+        let mu = link.clamp_mu(link.inverse(linear));
+        if !mu.is_finite() { return f64::INFINITY; }
+        let term = unit_deviance(y[(i, 0)], mu, family);
+        if !term.is_finite() { return f64::INFINITY; }
+        value += prior_weights[i] * term;
+    }
+    value
 }
 
 fn compute_mu_eta_weights(
@@ -221,25 +345,111 @@ fn compute_mu_eta_weights(
         eta[(i, 0)] += offset[i];
 
         let mu_i = link.clamp_mu(link.inverse(eta[(i, 0)]));
+        // Zero-weight rows are excluded from fitting; their derivative and
+        // variance need not be valid for a weighted IRLS update.
+        if prior_weights[i] == 0.0 {
+            mu[(i, 0)] = mu_i;
+            weights[i] = 0.0;
+            continue;
+        }
         let var_i = family.variance(mu_i);
-        let g_prime = link.derivative(mu_i);
+        let dmu_deta = link.mu_eta(eta[(i, 0)]);
 
-        if !var_i.is_finite() || var_i <= 0.0 || !g_prime.is_finite() || g_prime == 0.0 {
+        if !var_i.is_finite() || var_i <= 0.0 ||
+            !dmu_deta.is_finite() || dmu_deta == 0.0 {
             return Err(Error::Other(format!(
-                "Invalid IRLS weight at row {}: y = {}, mu = {}, variance = {}, g_prime = {}.",
-                i + 1,
-                y[(i, 0)],
-                mu_i,
-                var_i,
-                g_prime
+                "Invalid IRLS weight at row {}: y = {}, mu = {}, variance = {}, dmu_deta = {}.",
+                i + 1, y[(i, 0)], mu_i, var_i, dmu_deta
             )));
         }
 
         mu[(i, 0)] = mu_i;
-        weights[i] = prior_weights[i] / (var_i * g_prime * g_prime);
+        weights[i] = prior_weights[i] * dmu_deta * dmu_deta / var_i;
     }
 
     Ok((eta, mu, weights))
+}
+
+// Expected-information covariance: (X' W X)^{-1}, WITHOUT the dispersion
+// multiplier. Compute it from a pivoted QR of sqrt(W) X, rather than forming
+// normal equations and squaring the condition number.
+//
+// Optional because a p x p covariance matrix can be large. Rank-deficient
+// fits return no native covariance; stats::summary.glm() can use the stored
+// R QR to report the estimable coefficients on the R side.
+fn fisher_covariance_unscaled(
+    x: &Mat<f64>,
+    weights: &[f64],
+) -> extendr_api::Result<(Vec<f64>, bool)> {
+    use extendr_api::Error;
+    let n = x.nrows();
+    let p = x.ncols();
+    if p == 0 { return Ok((Vec::new(), true)); }
+    if n < p { return Ok((Vec::new(), false)); }
+
+    let mut work = Mat::<f64>::zeros(n, p);
+    for i in 0..n {
+        if !weights[i].is_finite() || weights[i] < 0.0 {
+            return Err(Error::Other(format!(
+                "Non-finite or negative final Fisher weight at row {}.", i + 1
+            )));
+        }
+        let sw = weights[i].sqrt();
+        for j in 0..p {
+            work[(i, j)] = x[(i, j)] * sw;
+        }
+    }
+    check_all_finite(&work, "weighted GLM design")?;
+
+    let decomposition = work.col_piv_qr();
+    let r = decomposition.R();
+    let mut max_diag: f64 = 0.0;
+    for i in 0..p {
+        max_diag = max_diag.max(r[(i, i)].abs());
+    }
+    // Match the current GLM solver's rank tolerance for native covariance.
+    if !max_diag.is_finite() || max_diag == 0.0 {
+        return Ok((Vec::new(), false));
+    }
+    for i in 0..p {
+        if !r[(i, i)].is_finite() || r[(i, i)].abs() <= 1e-10 * max_diag {
+            return Ok((Vec::new(), false));
+        }
+    }
+
+    // Invert upper-triangular R by back-substitution. inv(R) is p x p.
+    let mut rinv = Mat::<f64>::zeros(p, p);
+    for col in 0..p {
+        for i in (0..p).rev() {
+            let mut v = if i == col { 1.0 } else { 0.0 };
+            for k in (i + 1)..p {
+                v -= r[(i, k)] * rinv[(k, col)];
+            }
+            rinv[(i, col)] = v / r[(i, i)];
+        }
+    }
+
+    // With A P = Q R, the covariance in original coefficient coordinates is
+    // P [R^{-1} (R^{-1})'] P'.
+    let (forward, _) = decomposition.P().arrays();
+    let mut covariance = vec![0.0; p * p];
+    for j in 0..p {
+        for i in 0..p {
+            let mut value = 0.0;
+            for k in 0..p {
+                value += rinv[(i, k)] * rinv[(j, k)];
+            }
+            let oi = forward[i];
+            let oj = forward[j];
+            covariance[oi + p * oj] = value;
+        }
+    }
+    if covariance.iter().any(|v| !v.is_finite()) {
+        return Err(Error::Other(
+            "Non-finite inverse Fisher information; inference unavailable.".to_string()
+        ));
+    }
+    Ok((covariance, true))
 }
 
 pub fn ffi_fit_standard(
@@ -254,8 +464,8 @@ pub fn ffi_fit_standard(
     param: f64,
     max_iter: i32,
     tol: f64,
-    _singular_ok: bool,
-    _calc_se: bool,
+    singular_ok: bool,
+    calc_se: bool,
 ) -> extendr_api::Result<List> {
     use extendr_api::{list, Error};
 
@@ -297,11 +507,32 @@ pub fn ffi_fit_standard(
 
     check_all_finite(&x, "x")?;
     check_all_finite(&y, "y")?;
+    for i in 0..n {
+        let value = y[(i, 0)];
+        let invalid = match family {
+            Family::Binomial => value < 0.0 || value > 1.0,
+            Family::Poisson | Family::NegativeBinomial { .. } => value < 0.0,
+            Family::Tweedie { power } if power > 1.0 && power < 2.0 => value < 0.0,
+            _ => false,
+        };
+        if invalid {
+            return Err(Error::Other(format!(
+                "Response at row {} is outside the support of the selected GLM family.", i + 1
+            )));
+        }
+    }
 
     let prior_weights = optional_numeric_vector_from_robj(&weights_obj, n, 1.0, "weights")?;
     let offset = optional_numeric_vector_from_robj(&offset_obj, n, 0.0, "offset")?;
 
     check_weights(&prior_weights)?;
+    for (i, v) in offset.iter().enumerate() {
+        if !v.is_finite() {
+            return Err(Error::Other(format!(
+                "offset contains a non-finite value at row {}.", i + 1
+            )));
+        }
+    }
 
     if max_iter <= 0 {
         return Err(Error::Other("max_iter must be positive.".to_string()));
@@ -314,42 +545,67 @@ pub fn ffi_fit_standard(
     let mut beta = Mat::<f64>::zeros(p, 1);
     let mut converged = false;
     let mut iterations = 0usize;
+    let mut step_halvings = 0usize;
+    let mut current_deviance = weighted_deviance(
+        &y, &x, &beta, &offset, &prior_weights, family, link,
+    );
+    if !current_deviance.is_finite() {
+        return Err(Error::Other(
+            "GLM initial deviance is non-finite; check family, link, and offsets.".to_string(),
+        ));
+    }
 
     for iter in 0..(max_iter as usize) {
         iterations = iter + 1;
-
         let (eta, mu, working_weights) = compute_mu_eta_weights(
-            &y,
-            &x,
-            &beta,
-            &offset,
-            &prior_weights,
-            family,
-            link,
+            &y, &x, &beta, &offset, &prior_weights, family, link,
         )?;
 
         let mut z_for_beta = Mat::<f64>::zeros(n, 1);
-
         for i in 0..n {
+            if prior_weights[i] == 0.0 { continue; }
             let mu_i = mu[(i, 0)];
-            let g_prime = link.derivative(mu_i);
-            let z_total = eta[(i, 0)] + (y[(i, 0)] - mu_i) * g_prime;
-
-            // Offset is fixed, so the working response for beta removes it.
+            let dmu_deta = link.mu_eta(eta[(i, 0)]);
+            let z_total = eta[(i, 0)] + (y[(i, 0)] - mu_i) / dmu_deta;
             z_for_beta[(i, 0)] = z_total - offset[i];
         }
 
-        let next_beta = solve_weighted_least_squares_qr(
-            &x,
-            &z_for_beta,
-            &working_weights,
+        let full_beta = solve_weighted_least_squares_qr(
+            &x, &z_for_beta, &working_weights, singular_ok,
         )?;
 
+        // Backtrack toward the current iterate if the raw Fisher step
+        // would increase deviance or produce an invalid mean.
+        let mut accepted: Option<(Mat<f64>, f64, usize)> = None;
+        let mut scale = 1.0;
+        for halves in 0..=40usize {
+            let mut trial = beta.to_owned();
+            for j in 0..p {
+                trial[(j, 0)] += scale * (full_beta[(j, 0)] - beta[(j, 0)]);
+            }
+            let trial_dev = weighted_deviance(
+                &y, &x, &trial, &offset, &prior_weights, family, link,
+            );
+            if trial_dev.is_finite() &&
+               trial_dev <= current_deviance + 1e-10 * (1.0 + current_deviance.abs()) {
+                accepted = Some((trial, trial_dev, halves));
+                break;
+            }
+            scale *= 0.5;
+        }
+
+        let (next_beta, next_deviance, halves) = accepted.ok_or_else(|| {
+            Error::Other(
+                "IRLS step-halving failed to find a finite, non-increasing deviance step."
+                    .to_string(),
+            )
+        })?;
+        step_halvings += halves;
         let step = (&next_beta - &beta).norm_max();
-
         beta = next_beta;
+        current_deviance = next_deviance;
 
-        if step < tol {
+        if step <= tol * (1.0 + beta.norm_max()) {
             converged = true;
             break;
         }
@@ -370,13 +626,18 @@ pub fn ffi_fit_standard(
     let linear_predictors = final_eta.col(0).iter().copied().collect::<Vec<f64>>();
 
     let mut residuals = Vec::with_capacity(n);
-    let mut deviance_like = 0.0;
-
     for i in 0..n {
         let r = y[(i, 0)] - final_mu[(i, 0)];
         residuals.push(r);
-        deviance_like += prior_weights[i] * r * r;
     }
+
+    // Derive expected Fisher information at the final iterate, not the last
+    // pre-update iterate. It is optional and withheld for nonconverged fits.
+    let (vcov_unscaled, covariance_available) = if calc_se && converged {
+        fisher_covariance_unscaled(&x, &final_working_weights)?
+    } else {
+        (Vec::new(), false)
+    };
 
     Ok(list!(
         coefficients = coefficients,
@@ -385,9 +646,12 @@ pub fn ffi_fit_standard(
         residuals = residuals,
         prior_weights = prior_weights,
         weights = final_working_weights,
-        deviance = deviance_like,
+        vcov_unscaled = vcov_unscaled,
+        covariance_available = covariance_available,
+        deviance = current_deviance,
         iterations = iterations as i32,
         converged = converged,
+        step_halvings = step_halvings as i32,
         engine = "faer-glm-irls-fisher-scoring-qr"
     ))
 }

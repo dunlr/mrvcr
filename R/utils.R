@@ -39,14 +39,21 @@
   sum(family$dev.resids(y, mu0, weights))
 }
 
-.mrvcr_glm_aic <- function(y, family, fitted.values, weights, deviance, rank) {
+.mrvcr_glm_aic <- function(y, family, fitted.values, weights, deviance,
+                           rank, trials = NULL) {
   n_obs <- NROW(y)
 
   if (is.null(weights)) {
     weights <- rep.int(1, n_obs)
   }
 
-  n_for_family <- rep.int(1, n_obs)
+  # In a two-column binomial response the size of each binomial experiment
+  # matters for the log-likelihood/AIC. The R GLM family$aic() closure expects
+  # binomial n as well as the combined prior weights (case weight * n).
+  n_for_family <- if (is.null(trials)) rep.int(1, n_obs) else as.numeric(trials)
+  if (length(n_for_family) != n_obs) {
+    stop("trials must have the same length as the response", call. = FALSE)
+  }
 
   tryCatch(
     family$aic(y, n_for_family, fitted.values, weights, deviance) + 2 * rank,

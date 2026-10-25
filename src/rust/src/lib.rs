@@ -91,6 +91,78 @@ fn glm_fit_rust(
     )
 }
 
+// --- PENALIZED LINEAR MODEL INTERFACE ---
+
+#[extendr]
+fn penalized_lm_fit_rust(
+    y: Robj,
+    x: Robj,
+    weights: Robj,
+    offset: Robj,
+    penalty_factor: Robj,
+    pet: &str,
+    lambda: f64,
+    alpha: f64,
+    method: &str,
+    max_iter: i32,
+    tol: f64,
+) -> extendr_api::Result<List> {
+    models::linear::penalized::ffi_fit(
+        y, x, weights, offset, penalty_factor, pet, lambda, alpha, method, max_iter, tol,
+    )
+}
+
+// Separate path endpoint: the single-lambda ABI remains unchanged.
+#[extendr]
+fn penalized_lm_path_fit_rust(
+    y: Robj,
+    x: Robj,
+    weights: Robj,
+    offset: Robj,
+    penalty_factor: Robj,
+    pet: &str,
+    lambda: Robj,
+    alpha: f64,
+    method: &str,
+    max_iter: i32,
+    tol: f64,
+) -> extendr_api::Result<List> {
+    models::linear::penalized::ffi_fit_path(
+        y, x, weights, offset, penalty_factor, pet, lambda, alpha, method, max_iter, tol,
+    )
+}
+
+// Native sparse CSC Gaussian single-lambda PET interface.
+// Column pointers / indices / values are borrowed from dgCMatrix slots.
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn penalized_lm_sparse_fit_rust(
+    y: Robj, nrows: i32, col_ptr: Robj, row_idx: Robj, values: Robj,
+    weights: Robj, offset: Robj, penalty_factor: Robj,
+    pet: &str, lambda: f64, alpha: f64, method: &str,
+    intercept: bool, max_iter: i32, tol: f64,
+) -> extendr_api::Result<List> {
+    models::linear::penalized_sparse::ffi_fit_sparse(
+        y, nrows, col_ptr, row_idx, values, weights, offset, penalty_factor,
+        pet, lambda, alpha, method, intercept, max_iter, tol,
+    )
+}
+
+// Native sparse CSC warm-start path; single-lambda ABI remains unchanged.
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn penalized_lm_sparse_path_fit_rust(
+    y: Robj, nrows: i32, col_ptr: Robj, row_idx: Robj, values: Robj,
+    weights: Robj, offset: Robj, penalty_factor: Robj,
+    pet: &str, lambda: Robj, alpha: f64, method: &str,
+    intercept: bool, max_iter: i32, tol: f64,
+) -> extendr_api::Result<List> {
+    models::linear::penalized_sparse_path::ffi_fit_sparse_path(
+        y, nrows, col_ptr, row_idx, values, weights, offset, penalty_factor,
+        pet, lambda, alpha, method, intercept, max_iter, tol,
+    )
+}
+
 // --- VARIANCE COMPONENTS MODULE INTERFACES ---
 
 #[extendr]
@@ -172,6 +244,10 @@ extendr_module! {
     fn lm_fit_rust;
     fn wlm_fit_rust;
     fn glm_fit_rust;
+    fn penalized_lm_fit_rust;
+    fn penalized_lm_path_fit_rust;
+    fn penalized_lm_sparse_fit_rust;
+    fn penalized_lm_sparse_path_fit_rust;
 
     fn vcm_fit_rust;
     fn vcm_zzt_fit_rust;

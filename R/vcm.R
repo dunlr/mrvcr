@@ -1,4 +1,10 @@
 #' Variance Component Model with variance kernels V_i = Z_i %*% Z_i^T
+#' @param formula Fixed-effects regression formula.
+#' @param random_formula One-sided formula defining a random-effects design matrix.
+#' @param data A data frame or environment containing model variables.
+#' @param pet Estimation criterion (`"MLE"` or `"REML"`).
+#' @param method Numerical method, currently only the incomplete `"MM"` prototype.
+#'
 #' @export
 vcm_zzt <- function(formula, random_formula, data = parent.frame(), pet = "REML", method = "MM") {
   cl <- match.call()
@@ -24,21 +30,22 @@ vcm_zzt <- function(formula, random_formula, data = parent.frame(), pet = "REML"
 
   Z <- stats::model.matrix(attr(mf_random, "terms"), mf_random)
 
-  # 3. Transmit arrays directly to the compiled rust endpoint
-  fit_output <- .Call(
-    wrap__vcm_zzt_fit_rust,
-    as.numeric(Y),
-    as.numeric(X),
-    as.numeric(Z),
-    as.integer(nrow(X)),
-    as.integer(ncol(X)),
-    as.integer(ncol(Z)),
-    as.character(pet),
-    as.character(method)
+  # Pass matrices to the current 5-argument extendr wrapper. Do not flatten.
+  fit_output <- vcm_zzt_fit_rust(
+    Y, X, Z, as.character(pet), as.character(method)
   )
 
+  # The current Rust MM branch uses placeholder variance updates. Never
+  # expose the output as a valid fitted variance-component model.
+  if (!isTRUE(fit_output$converged)) {
+    stop(
+      "vcm_zzt is currently a prototype: ML/REML MM variance-component updates are not implemented.",
+      call. = FALSE
+    )
+  }
+
   # 4. Reconstruct return layout mapping
-  fit_output$coefficients <- setNames(fit_output$coefficients, colnames(X))
+  fit_output$coefficients <- stats::setNames(fit_output$coefficients, colnames(X))
   class(fit_output) <- "mrvcr_vcm"
   return(fit_output)
 }
