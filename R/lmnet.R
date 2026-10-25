@@ -41,17 +41,26 @@
 #' @param model,x,y Whether to retain the model frame, design matrix, or
 #'   response in the returned object.
 #' @param contrasts Optional list of contrast coding settings.
+#' @param sparse If `TRUE`, use `Matrix::sparse.model.matrix()` to construct a
+#'   CSC design and dispatch to the native sparse coordinate-descent solver.
+#'   This requires the suggested `Matrix` package. The intercept remains
+#'   implicit and unpenalized; paths use sparse warm starts.
 #'
-#' @return A scalar lambda returns class `mrvcr_lmnet` (unchanged). A vector
-#'   returns `mrvcr_lmnet_path`: coefficient paths and lambda-specific
-#'   diagnostics, with fitted values computed on demand.
+#' @return In dense mode, a scalar lambda returns `mrvcr_lmnet` and a path
+#'   returns `mrvcr_lmnet_path`. With `sparse = TRUE`, results also inherit
+#'   `mrvcr_lmnet_sparse_formula` and respectively `mrvcr_lmnet_sparse` or
+#'   `mrvcr_lmnet_sparse_path`; formula-based `predict(newdata = ...)` is
+#'   supported. Sparse fitted intercepts are implicit and unpenalized.
 #' @export
 lmnet <- function(formula, data, subset, weights, na.action, offset,
                   pet = "Ridge", lambda, alpha = NULL,
                   method = "auto", penalty.factor = NULL,
                   model = TRUE, x = FALSE, y = FALSE, contrasts = NULL,
-                  max_iter = 10000L, tol = 1e-8) {
+                  max_iter = 10000L, tol = 1e-8, sparse = FALSE) {
   cl <- match.call()
+  if (!is.logical(sparse) || length(sparse) != 1L || is.na(sparse)) {
+    stop("'sparse' must be TRUE or FALSE.", call. = FALSE)
+  }
   if (missing(lambda)) {
     stop("'lambda' is required for a penalized PET.", call. = FALSE)
   }
@@ -98,6 +107,15 @@ lmnet <- function(formula, data, subset, weights, na.action, offset,
   multi <- is.matrix(yy)
   n <- NROW(yy)
   q <- if (multi) NCOL(yy) else 1L
+  if (isTRUE(sparse)) {
+    return(.mrvcr_lmnet_fit_sparse_formula(
+      mf = mf, tt = tt, yy = yy, ww = as.vector(stats::model.weights(mf)),
+      oo = as.vector(stats::model.offset(mf)), pet = pet, lambda = lambda,
+      alpha = alpha, method = method, penalty_factor = penalty.factor,
+      max_iter = max_iter, tol = tol, model = model, x = x, y = y,
+      contrasts = contrasts, cl = cl
+    ))
+  }
   X <- stats::model.matrix(tt, mf, contrasts)
   p <- NCOL(X)
   if (p == 0L || n == 0L || q == 0L) {

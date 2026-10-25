@@ -21,7 +21,8 @@ lmnet(
   y = FALSE,
   contrasts = NULL,
   max_iter = 10000L,
-  tol = 1e-08
+  tol = 1e-08,
+  sparse = FALSE
 )
 }
 \arguments{
@@ -62,11 +63,18 @@ response in the returned object.}
 \item{max_iter}{Maximum coordinate-descent sweeps per response.}
 
 \item{tol}{Relative first-order (KKT) stopping tolerance for coordinate descent.}
+
+\item{sparse}{If \code{TRUE}, use \code{Matrix::sparse.model.matrix()} to construct a
+CSC design and dispatch to the native sparse coordinate-descent solver.
+This requires the suggested \code{Matrix} package. The intercept remains
+implicit and unpenalized; paths use sparse warm starts.}
 }
 \value{
-A scalar lambda returns class \code{mrvcr_lmnet} (unchanged). A vector
-returns \code{mrvcr_lmnet_path}: coefficient paths and lambda-specific
-diagnostics, with fitted values computed on demand.
+In dense mode, a scalar lambda returns \code{mrvcr_lmnet} and a path
+returns \code{mrvcr_lmnet_path}. With \code{sparse = TRUE}, results also inherit
+\code{mrvcr_lmnet_sparse_formula} and respectively \code{mrvcr_lmnet_sparse} or
+\code{mrvcr_lmnet_sparse_path}; formula-based \code{predict(newdata = ...)} is
+supported. Sparse fitted intercepts are implicit and unpenalized.
 }
 \description{
 Fits Gaussian models with a parameter estimation target (\code{pet}) distinct

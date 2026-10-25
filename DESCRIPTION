@@ -18,7 +18,8 @@ SystemRequirements: Cargo (Rust's package manager), rustc >= 1.95.0, xz
 Depends: 
     R (>= 4.2)
 Imports:
-    stats
+    stats,
+    methods
 Suggests:
     MASS,
     statmod,
