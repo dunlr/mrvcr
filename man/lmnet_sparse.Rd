@@ -27,7 +27,8 @@ lmnet_sparse(
 
 \item{pet}{One of \code{"Ridge"}, \code{"Lasso"}, or \code{"ElasticNet"}.}
 
-\item{lambda}{One finite nonnegative scalar; paths not yet implemented here.}
+\item{lambda}{A finite nonnegative scalar or a strictly decreasing numeric
+vector of two or more finite nonnegative penalties for a warm-start path.}
 
 \item{alpha}{\code{NULL} for ridge/lasso, required for elastic net.}
 
@@ -46,15 +47,18 @@ do not include the intercept.}
 
 \item{tol}{Positive KKT stopping tolerance.}
 
-\item{keep_x}{Retain the original sparse design for \code{predict(fit, newx=...)}
-checks and reproducibility. No matrix copy is created by this switch.}
+\item{keep_x}{Retain the original sparse design matrix. For paths,
+\code{predict(fit)} and \code{fitted(fit)} without \code{newx} require \code{keep_x = TRUE};
+otherwise supply \code{newx} to \code{predict()}. The matrix is referenced, not
+densified.}
 }
 \value{
-An \code{mrvcr_lmnet_sparse} fit with coefficients, fitted values,
-residuals, objective and KKT diagnostics.
+A scalar fit has class \code{mrvcr_lmnet_sparse}, unchanged. A path
+has class \code{mrvcr_lmnet_sparse_path} with coefficients, objectives, and KKT
+diagnostics per lambda; fitted values are computed on demand.
 }
 \description{
-Fits a \emph{single} Gaussian ridge, lasso, or elastic-net penalty to an existing
+Fits Gaussian ridge, lasso, or elastic-net penalties to an existing
 \code{Matrix::dgCMatrix}, keeping its column-compressed storage intact. The
 intercept is represented implicitly in the Rust coordinate-descent solver;
 it is never appended as a column of ones. Sparse predictors are \strong{not}
@@ -65,7 +69,9 @@ The objective is \code{sum(w * (y - offset - intercept - x \%*\% beta)^2) / (2 *
 never penalized. For multiple responses the penalty is separable, not a
 group penalty. See \code{\link[=lmnet]{lmnet()}} for PET and penalty conventions.
 
-This matrix-oriented entry point deliberately does not modify the
-formula interface of \code{\link[=lmnet]{lmnet()}}. Sparse paths and formula-based sparse model
-matrix construction will be implemented separately.
+A strictly decreasing vector of lambda values fits a sparse warm-start
+regularization path using coordinate descent and returns an
+\code{mrvcr_lmnet_sparse_path} object. A scalar lambda preserves the original
+\code{mrvcr_lmnet_sparse} behavior. Formula-based sparse model-matrix
+construction is not implemented.
 }

@@ -148,6 +148,21 @@ fn penalized_lm_sparse_fit_rust(
     )
 }
 
+// Native sparse CSC warm-start path; single-lambda ABI remains unchanged.
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn penalized_lm_sparse_path_fit_rust(
+    y: Robj, nrows: i32, col_ptr: Robj, row_idx: Robj, values: Robj,
+    weights: Robj, offset: Robj, penalty_factor: Robj,
+    pet: &str, lambda: Robj, alpha: f64, method: &str,
+    intercept: bool, max_iter: i32, tol: f64,
+) -> extendr_api::Result<List> {
+    models::linear::penalized_sparse_path::ffi_fit_sparse_path(
+        y, nrows, col_ptr, row_idx, values, weights, offset, penalty_factor,
+        pet, lambda, alpha, method, intercept, max_iter, tol,
+    )
+}
+
 // --- VARIANCE COMPONENTS MODULE INTERFACES ---
 
 #[extendr]
@@ -232,6 +247,7 @@ extendr_module! {
     fn penalized_lm_fit_rust;
     fn penalized_lm_path_fit_rust;
     fn penalized_lm_sparse_fit_rust;
+    fn penalized_lm_sparse_path_fit_rust;
 
     fn vcm_fit_rust;
     fn vcm_zzt_fit_rust;

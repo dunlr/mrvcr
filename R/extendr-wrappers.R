@@ -17,6 +17,8 @@ penalized_lm_path_fit_rust <- function(y, x, weights, offset, penalty_factor, pe
 
 penalized_lm_sparse_fit_rust <- function(y, nrows, col_ptr, row_idx, values, weights, offset, penalty_factor, pet, lambda, alpha, method, intercept, max_iter, tol) .Call(wrap__penalized_lm_sparse_fit_rust, y, nrows, col_ptr, row_idx, values, weights, offset, penalty_factor, pet, lambda, alpha, method, intercept, max_iter, tol)
 
+penalized_lm_sparse_path_fit_rust <- function(y, nrows, col_ptr, row_idx, values, weights, offset, penalty_factor, pet, lambda, alpha, method, intercept, max_iter, tol) .Call(wrap__penalized_lm_sparse_path_fit_rust, y, nrows, col_ptr, row_idx, values, weights, offset, penalty_factor, pet, lambda, alpha, method, intercept, max_iter, tol)
+
 vcm_fit_rust <- function(y, x, v, pet, method) .Call(wrap__vcm_fit_rust, y, x, v, pet, method)
 
 vcm_zzt_fit_rust <- function(y, x, z, pet, method) .Call(wrap__vcm_zzt_fit_rust, y, x, z, pet, method)

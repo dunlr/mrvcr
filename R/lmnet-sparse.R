@@ -1,6 +1,6 @@
 #' Gaussian Penalized Regression on Native Sparse CSC Matrices (Experimental)
 #'
-#' Fits a *single* Gaussian ridge, lasso, or elastic-net penalty to an existing
+#' Fits Gaussian ridge, lasso, or elastic-net penalties to an existing
 #' `Matrix::dgCMatrix`, keeping its column-compressed storage intact. The
 #' intercept is represented implicitly in the Rust coordinate-descent solver;
 #' it is never appended as a column of ones. Sparse predictors are **not**
@@ -12,14 +12,17 @@
 #' never penalized. For multiple responses the penalty is separable, not a
 #' group penalty. See [lmnet()] for PET and penalty conventions.
 #'
-#' This matrix-oriented entry point deliberately does not modify the
-#' formula interface of [lmnet()]. Sparse paths and formula-based sparse model
-#' matrix construction will be implemented separately.
+#' A strictly decreasing vector of lambda values fits a sparse warm-start
+#' regularization path using coordinate descent and returns an
+#' `mrvcr_lmnet_sparse_path` object. A scalar lambda preserves the original
+#' `mrvcr_lmnet_sparse` behavior. Formula-based sparse model-matrix
+#' construction is not implemented.
 #'
 #' @param x A canonical `Matrix::dgCMatrix` with numeric double values.
 #' @param y Finite numeric response vector or matrix (rows = observations).
 #' @param pet One of `"Ridge"`, `"Lasso"`, or `"ElasticNet"`.
-#' @param lambda One finite nonnegative scalar; paths not yet implemented here.
+#' @param lambda A finite nonnegative scalar or a strictly decreasing numeric
+#'   vector of two or more finite nonnegative penalties for a warm-start path.
 #' @param alpha `NULL` for ridge/lasso, required for elastic net.
 #' @param weights Optional nonnegative observation weights.
 #' @param offset Optional row-wise additive offset (shared across responses).
@@ -29,11 +32,14 @@
 #' @param method `"auto"` or `"coordinate_descent"` (aliases `"cd"`).
 #' @param max_iter Maximum coordinate-descent sweeps per response.
 #' @param tol Positive KKT stopping tolerance.
-#' @param keep_x Retain the original sparse design for `predict(fit, newx=...)`
-#'   checks and reproducibility. No matrix copy is created by this switch.
+#' @param keep_x Retain the original sparse design matrix. For paths,
+#'   `predict(fit)` and `fitted(fit)` without `newx` require `keep_x = TRUE`;
+#'   otherwise supply `newx` to `predict()`. The matrix is referenced, not
+#'   densified.
 #'
-#' @return An `mrvcr_lmnet_sparse` fit with coefficients, fitted values,
-#'   residuals, objective and KKT diagnostics.
+#' @return A scalar fit has class `mrvcr_lmnet_sparse`, unchanged. A path
+#'   has class `mrvcr_lmnet_sparse_path` with coefficients, objectives, and KKT
+#'   diagnostics per lambda; fitted values are computed on demand.
 #' @export
 lmnet_sparse <- function(x, y, pet = "Ridge", lambda, alpha = NULL,
                          weights = NULL, offset = NULL, penalty.factor = NULL,
@@ -49,8 +55,12 @@ lmnet_sparse <- function(x, y, pet = "Ridge", lambda, alpha = NULL,
       NROW(y) != nrow(x) || any(!is.finite(y)) || NCOL(y) < 1L) {
     stop("'y' must be a finite numeric vector or matrix with nrow(x) rows.", call. = FALSE)
   }
-  if (!is.numeric(lambda) || length(lambda) != 1L || !is.finite(lambda) || lambda < 0) {
-    stop("Sparse fitting currently requires one finite nonnegative lambda.", call. = FALSE)
+  if (!is.numeric(lambda) || length(lambda) == 0L ||
+      any(!is.finite(lambda)) || any(lambda < 0)) {
+    stop("'lambda' must contain finite nonnegative numeric values.", call. = FALSE)
+  }
+  if (length(lambda) > 1L && any(diff(lambda) >= 0)) {
+    stop("Sparse lambda paths must be strictly decreasing.", call. = FALSE)
   }
   if (!is.null(alpha) && (!is.numeric(alpha) || length(alpha) != 1L ||
                           !is.finite(alpha))) {
@@ -97,6 +107,15 @@ lmnet_sparse <- function(x, y, pet = "Ridge", lambda, alpha = NULL,
   storage.mode(yy) <- "double"
   ww <- if (is.null(weights)) NULL else as.numeric(weights)
   oo <- if (is.null(offset)) NULL else as.numeric(offset)
+  if (length(lambda) > 1L) {
+    return(.mrvcr_lmnet_sparse_make_path(
+      x = x, yy = yy, ww = ww, oo = oo,
+      penalty_factor = as.numeric(penalty.factor),
+      pet = pet, lambda = lambda, alpha = alpha, method = method,
+      intercept = intercept, max_iter = max_iter, tol = tol, keep_x = keep_x,
+      cl = match.call()
+    ))
+  }
   res <- penalized_lm_sparse_fit_rust(
     yy, as.integer(n), x@p, x@i, x@x, ww, oo,
     as.numeric(penalty.factor), as.character(pet), as.numeric(lambda),

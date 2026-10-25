@@ -100,7 +100,7 @@ testthat::test_that("sparse input validation rejects unsafe and unsupported valu
   ex <- .make_sparse_example()
   y <- stats::rnorm(nrow(ex$x))
   testthat::expect_error(mrvcr::lmnet_sparse(ex$a, y, lambda = 1), "dgCMatrix")
-  testthat::expect_error(mrvcr::lmnet_sparse(ex$x, y, lambda = c(1, .5)), "one")
+  testthat::expect_error(mrvcr::lmnet_sparse(ex$x, y, lambda = c(.5, 1)), "strictly decreasing")
   testthat::expect_error(mrvcr::lmnet_sparse(ex$x, y[-1], lambda = 1), "rows")
   testthat::expect_error(mrvcr::lmnet_sparse(ex$x, y, lambda = 1,
                                               method = "cholesky"), "coordinate_descent")
