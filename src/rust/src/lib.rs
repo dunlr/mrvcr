@@ -112,6 +112,26 @@ fn penalized_lm_fit_rust(
     )
 }
 
+// Separate path endpoint: the single-lambda ABI remains unchanged.
+#[extendr]
+fn penalized_lm_path_fit_rust(
+    y: Robj,
+    x: Robj,
+    weights: Robj,
+    offset: Robj,
+    penalty_factor: Robj,
+    pet: &str,
+    lambda: Robj,
+    alpha: f64,
+    method: &str,
+    max_iter: i32,
+    tol: f64,
+) -> extendr_api::Result<List> {
+    models::linear::penalized::ffi_fit_path(
+        y, x, weights, offset, penalty_factor, pet, lambda, alpha, method, max_iter, tol,
+    )
+}
+
 // --- VARIANCE COMPONENTS MODULE INTERFACES ---
 
 #[extendr]
@@ -194,6 +214,7 @@ extendr_module! {
     fn wlm_fit_rust;
     fn glm_fit_rust;
     fn penalized_lm_fit_rust;
+    fn penalized_lm_path_fit_rust;
 
     fn vcm_fit_rust;
     fn vcm_zzt_fit_rust;

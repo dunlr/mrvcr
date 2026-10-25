@@ -9,8 +9,9 @@
 #' `pet = "Ridge"` fixes `alpha = 0`, `pet = "Lasso"` fixes `alpha = 1`,
 #' and `pet = "ElasticNet"` requires an explicit `alpha` in `[0, 1]`.
 #' `method = "auto"` selects Cholesky for ridge and coordinate descent for
-#' lasso/elastic net. Coordinate descent is a single-lambda, cold-start,
-#' dense implementation; it does not standardize X or construct a Gram matrix.
+#' lasso/elastic net. A strictly decreasing lambda vector uses warm-start
+#' coordinate descent and returns a `mrvcr_lmnet_path` object. No automatic
+#' standardization is applied, and coordinate descent does not build X'X.
 #' An intercept is unpenalized by default; multiple response columns are
 #' penalized independently, not with a joint group penalty.
 #'
@@ -26,7 +27,8 @@
 #' @param na.action Missing-value handling function.
 #' @param offset Optional additive offset; common to all response columns.
 #' @param pet Statistical target: `"Ridge"`, `"Lasso"`, or `"ElasticNet"`.
-#' @param lambda Nonnegative statistical regularization parameter.
+#' @param lambda Nonnegative regularization parameter (scalar), or a numeric
+#'   vector of at least two strictly decreasing values for a warm-start path.
 #' @param alpha Elastic-net L1 fraction; omitted for ridge/lasso and required
 #'   for elastic net. PET-specific constraints are validated in Rust.
 #' @param method Numerical method: `"auto"`, `"cholesky"`, `"qr"`
@@ -40,9 +42,9 @@
 #'   response in the returned object.
 #' @param contrasts Optional list of contrast coding settings.
 #'
-#' @return An object of class `mrvcr_lmnet` with coefficients, fitted values,
-#'   residuals, weighted RSS, the objective, convergence diagnostics, and
-#'   the Rust result.
+#' @return A scalar lambda returns class `mrvcr_lmnet` (unchanged). A vector
+#'   returns `mrvcr_lmnet_path`: coefficient paths and lambda-specific
+#'   diagnostics, with fitted values computed on demand.
 #' @export
 lmnet <- function(formula, data, subset, weights, na.action, offset,
                   pet = "Ridge", lambda, alpha = NULL,
@@ -53,8 +55,12 @@ lmnet <- function(formula, data, subset, weights, na.action, offset,
   if (missing(lambda)) {
     stop("'lambda' is required for a penalized PET.", call. = FALSE)
   }
-  if (length(lambda) != 1L || !is.numeric(lambda)) {
-    stop("'lambda' must be a numeric scalar.", call. = FALSE)
+  if (!is.numeric(lambda) || length(lambda) == 0L ||
+      any(!is.finite(lambda)) || any(lambda < 0)) {
+    stop("'lambda' must contain finite, nonnegative numeric values.", call. = FALSE)
+  }
+  if (length(lambda) > 1L && any(diff(lambda) >= 0)) {
+    stop("A lambda path must be strictly decreasing.", call. = FALSE)
   }
   if (!is.null(alpha) &&
       (length(alpha) != 1L || !is.numeric(alpha) || !is.finite(alpha))) {
@@ -111,6 +117,15 @@ lmnet <- function(formula, data, subset, weights, na.action, offset,
   }
   penalty.factor <- as.numeric(penalty.factor)
   names(penalty.factor) <- colnames(X)
+
+  if (length(lambda) > 1L) {
+    return(.mrvcr_lmnet_make_path(
+      yy = yy, X = X, ww = ww, oo = oo, penalty_factor = penalty.factor,
+      pet = pet, lambda = lambda, alpha = alpha, method = method,
+      max_iter = max_iter, tol = tol, mf = mf, tt = tt, cl = cl,
+      model = model, x = x, y = y, multi = multi, n = n, p = p, q = q
+    ))
+  }
 
   fit <- penalized_lm_fit_rust(
     yy, X, ww, oo, unname(penalty.factor), as.character(pet),

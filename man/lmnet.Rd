@@ -41,7 +41,8 @@ response using \code{cbind()}.}
 
 \item{pet}{Statistical target: \code{"Ridge"}, \code{"Lasso"}, or \code{"ElasticNet"}.}
 
-\item{lambda}{Nonnegative statistical regularization parameter.}
+\item{lambda}{Nonnegative regularization parameter (scalar), or a numeric
+vector of at least two strictly decreasing values for a warm-start path.}
 
 \item{alpha}{Elastic-net L1 fraction; omitted for ridge/lasso and required
 for elastic net. PET-specific constraints are validated in Rust.}
@@ -63,9 +64,9 @@ response in the returned object.}
 \item{tol}{Relative first-order (KKT) stopping tolerance for coordinate descent.}
 }
 \value{
-An object of class \code{mrvcr_lmnet} with coefficients, fitted values,
-residuals, weighted RSS, the objective, convergence diagnostics, and
-the Rust result.
+A scalar lambda returns class \code{mrvcr_lmnet} (unchanged). A vector
+returns \code{mrvcr_lmnet_path}: coefficient paths and lambda-specific
+diagnostics, with fitted values computed on demand.
 }
 \description{
 Fits Gaussian models with a parameter estimation target (\code{pet}) distinct
@@ -77,8 +78,9 @@ from the numerical solver (\code{method}). The PET selects a penalized objective
 \code{pet = "Ridge"} fixes \code{alpha = 0}, \code{pet = "Lasso"} fixes \code{alpha = 1},
 and \code{pet = "ElasticNet"} requires an explicit \code{alpha} in \verb{[0, 1]}.
 \code{method = "auto"} selects Cholesky for ridge and coordinate descent for
-lasso/elastic net. Coordinate descent is a single-lambda, cold-start,
-dense implementation; it does not standardize X or construct a Gram matrix.
+lasso/elastic net. A strictly decreasing lambda vector uses warm-start
+coordinate descent and returns a \code{mrvcr_lmnet_path} object. No automatic
+standardization is applied, and coordinate descent does not build X'X.
 An intercept is unpenalized by default; multiple response columns are
 penalized independently, not with a joint group penalty.
 
