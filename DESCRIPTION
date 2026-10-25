@@ -22,5 +22,6 @@ Imports:
 Suggests:
     MASS,
     statmod,
+    Matrix,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
