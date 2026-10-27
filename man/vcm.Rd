@@ -19,7 +19,8 @@ vcm(
   init = "equal",
   stop_rule = "parameter",
   kkt_tol = sqrt(tol),
-  boundary_tol = 1e-08
+  boundary_tol = 1e-08,
+  solver = "dense"
 )
 }
 \arguments{
@@ -67,6 +68,12 @@ or \code{"both"}. KKT stopping uses a scale-adjusted score residual.}
 \item{boundary_tol}{Nonnegative relative threshold for classifying an
 estimated variance component as approximately zero in KKT checks.
 This does not project coefficients or modify the EM/MM updates.}
+
+\item{solver}{\code{"dense"} (backward-compatible default) or \code{"spectral"}.
+The spectral solver requires exactly two kernels, with the \strong{second}
+kernel strictly positive definite; it uses a one-time generalized
+eigendecomposition and diagonal-covariance ML/REML calculations.
+PET, optimizer, and convergence rules have identical meanings in both.}
 }
 \value{
 An experimental \code{mrvcr_vcm_em} object (legacy class name retained

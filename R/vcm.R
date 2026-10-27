@@ -45,6 +45,11 @@
 #'   covariance contributions), `"moments"` (nonnegative residual moment
 #'   regression), or `"random"` (randomly perturb trace-scaled starts).
 #'   The moment estimator is for **initialization only**, not a separate PET.
+#' @param solver `"dense"` (backward-compatible default) or `"spectral"`.
+#'   The spectral solver requires exactly two kernels, with the **second**
+#'   kernel strictly positive definite; it uses a one-time generalized
+#'   eigendecomposition and diagonal-covariance ML/REML calculations.
+#'   PET, optimizer, and convergence rules have identical meanings in both.
 #' @param stop_rule `"parameter"` (backward-compatible default), `"kkt"`,
 #'   or `"both"`. KKT stopping uses a scale-adjusted score residual.
 #' @param kkt_tol Scaled KKT tolerance, default `sqrt(tol)`. Applies when
@@ -71,7 +76,7 @@ vcm <- function(formula, data = parent.frame(), kernels,
                 max_iter = 500L, tol = 1e-7, contrasts = NULL,
                 model = TRUE, x = FALSE,
                 init = "equal", stop_rule = "parameter", kkt_tol = sqrt(tol),
-                boundary_tol = 1e-8) {
+                boundary_tol = 1e-8, solver = "dense") {
   if (!inherits(formula, "formula")) stop("'formula' must be a formula.", call. = FALSE)
   if (missing(kernels) || !is.list(kernels) || length(kernels) < 1L) {
     stop("'kernels' must be a nonempty list of covariance matrices.", call. = FALSE)
@@ -86,6 +91,13 @@ vcm <- function(formula, data = parent.frame(), kernels,
     stop("'method' must be 'EM' or 'MM'.", call. = FALSE)
   }
   method <- toupper(method)
+  if (!is.character(solver) || length(solver) != 1L || is.na(solver) ||
+      !solver %in% c("dense", "spectral")) {
+    stop("'solver' must be 'dense' or 'spectral'.", call. = FALSE)
+  }
+  if (solver == "spectral" && length(kernels) != 2L) {
+    stop("'spectral' solver requires exactly two covariance kernels.", call. = FALSE)
+  }
   if (!is.numeric(tol) || length(tol) != 1L || !is.finite(tol) || tol <= 0) {
     stop("'tol' must be positive and finite.", call. = FALSE)
   }
@@ -200,11 +212,26 @@ vcm <- function(formula, data = parent.frame(), kernels,
     theta_init <- theta_init[kernel_names]
   }
   initial_theta <- stats::setNames(as.numeric(theta_init), kernel_names)
-  result <- vcm_em_fit_rust(
-    as.numeric(response), X, K, as.integer(rank), as.numeric(theta_init),
-    pet, method, as.integer(max_iter), as.numeric(tol),
-    stop_rule, as.numeric(kkt_tol), as.numeric(boundary_tol)
-  )
+  if (solver == "spectral") {
+    spec <- .vcm_spectral_prepare(response, X, K)
+    result <- vcm_spectral_fit_rust(
+      as.numeric(spec$y), spec$X, as.numeric(spec$d), as.integer(rank),
+      as.numeric(theta_init), as.numeric(spec$logdet_reference),
+      pet, method, as.integer(max_iter), as.numeric(tol),
+      stop_rule, as.numeric(kkt_tol), as.numeric(boundary_tol)
+    )
+    # The invertible spectral transformation leaves beta_GLS invariant;
+    # fitted and response residuals are returned on the original scale.
+    result$fitted_values <- as.vector(X %*% result$coefficients)
+    result$residuals <- as.numeric(response) - result$fitted_values
+  } else {
+    result <- vcm_em_fit_rust(
+      as.numeric(response), X, K, as.integer(rank), as.numeric(theta_init),
+      pet, method, as.integer(max_iter), as.numeric(tol),
+      stop_rule, as.numeric(kkt_tol), as.numeric(boundary_tol)
+    )
+  }
+  result$solver <- solver
   result$coefficients <- stats::setNames(as.numeric(result$coefficients), colnames(X))
   result$variance_components <- stats::setNames(as.numeric(result$variance_components), kernel_names)
   result$fitted.values <- stats::setNames(as.numeric(result$fitted_values), rownames(mf))
@@ -328,4 +355,37 @@ print.mrvcr_vcm_em <- function(x, ...) {
     return(initial)
   }
   pmax(candidate$par, 1e-8 * max(1, max(candidate$par)))
+}
+
+# Compute the generalized congruence decomposition without forming inverses
+# of Sigma(theta) at any iteration. If V2 = R' R (R upper triangular), set
+# B = R^-1 and whiten V1 as B' V1 B. Eigenvectors Q give U = B Q with
+# U' V1 U = diag(d) and U' V2 U = I. y_tilde = U' y, X_tilde = U' X.
+# This decomposition is once per fit, not per EM/MM step. The transformed
+# likelihood includes logdet(V2), so original ML/REML constants are retained.
+.vcm_spectral_prepare <- function(y, X, K) {
+  n <- length(y)
+  ref <- K[, , 2L]
+  R <- tryCatch(chol(ref), error = function(e) NULL)
+  if (is.null(R)) {
+    stop("The second covariance kernel must be positive definite for solver = 'spectral'.",
+         call. = FALSE)
+  }
+  Rinv <- backsolve(R, diag(n))
+  whitened <- crossprod(Rinv, K[, , 1L] %*% Rinv)
+  whitened <- (whitened + t(whitened)) / 2
+  eig <- eigen(whitened, symmetric = TRUE)
+  cutoff <- n * 100 * .Machine$double.eps * max(1, max(abs(eig$values)))
+  if (min(eig$values) < -cutoff) {
+    stop("The transformed first kernel has a materially negative generalized eigenvalue.",
+         call. = FALSE)
+  }
+  d <- pmax(eig$values, 0)
+  U <- Rinv %*% eig$vectors
+  list(
+    y = as.numeric(crossprod(U, y)),
+    X = unname(crossprod(U, X)),
+    d = as.numeric(d),
+    logdet_reference = 2 * sum(log(diag(R)))
+  )
 }

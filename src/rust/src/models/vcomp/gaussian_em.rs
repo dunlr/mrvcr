@@ -215,7 +215,7 @@ pub fn ffi_fit_em(y_obj: Robj, x_obj: Robj, kernel_array: Robj,
     let mut theta = theta_initial.to_vec();
     let mut state = evaluate(y, &x, &kernels, &theta, restricted)?;
     let mut likelihood_path = vec![state.loglik];
-    let mut converged = false;
+    let mut converged;
     let mut iterations = 0usize;
     let mut final_relative_change = f64::INFINITY;
     let mut final_relative_likelihood_change = f64::INFINITY;

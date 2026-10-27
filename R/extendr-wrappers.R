@@ -21,6 +21,8 @@ penalized_lm_sparse_path_fit_rust <- function(y, nrows, col_ptr, row_idx, values
 
 vcm_em_fit_rust <- function(y, x, kernels, kernel_ranks, theta_init, pet, method, max_iter, tol, stop_rule, kkt_tol, boundary_tol) .Call(wrap__vcm_em_fit_rust, y, x, kernels, kernel_ranks, theta_init, pet, method, max_iter, tol, stop_rule, kkt_tol, boundary_tol)
 
+vcm_spectral_fit_rust <- function(y_tilde, x_tilde, eigenvalues, kernel_ranks, theta_init, logdet_reference, pet, method, max_iter, tol, stop_rule, kkt_tol, boundary_tol) .Call(wrap__vcm_spectral_fit_rust, y_tilde, x_tilde, eigenvalues, kernel_ranks, theta_init, logdet_reference, pet, method, max_iter, tol, stop_rule, kkt_tol, boundary_tol)
+
 vcm_fit_rust <- function(y, x, v, pet, method) .Call(wrap__vcm_fit_rust, y, x, v, pet, method)
 
 vcm_zzt_fit_rust <- function(y, x, z, pet, method) .Call(wrap__vcm_zzt_fit_rust, y, x, z, pet, method)

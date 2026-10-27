@@ -179,6 +179,23 @@ fn vcm_em_fit_rust(
     )
 }
 
+// Spectral two-kernel Gaussian VCM: R computes one generalized eigendecomposition,
+// Rust evaluates exact ML/REML and EM/MM in O(n p^2 + p^3) per iteration.
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn vcm_spectral_fit_rust(
+    y_tilde: Robj, x_tilde: Robj, eigenvalues: Robj, kernel_ranks: Robj,
+    theta_init: Robj, logdet_reference: f64, pet: &str, method: &str,
+    max_iter: i32, tol: f64, stop_rule: &str, kkt_tol: f64,
+    boundary_tol: f64,
+) -> extendr_api::Result<List> {
+    models::vcomp::gaussian_spectral::ffi_fit_spectral(
+        y_tilde, x_tilde, eigenvalues, kernel_ranks, theta_init,
+        logdet_reference, pet, method, max_iter, tol,
+        stop_rule, kkt_tol, boundary_tol,
+    )
+}
+
 // --- VARIANCE COMPONENTS MODULE INTERFACES ---
 
 #[extendr]
@@ -266,6 +283,7 @@ extendr_module! {
     fn penalized_lm_sparse_path_fit_rust;
 
     fn vcm_em_fit_rust;
+    fn vcm_spectral_fit_rust;
     fn vcm_fit_rust;
     fn vcm_zzt_fit_rust;
     fn mvcm_fit_rust;
