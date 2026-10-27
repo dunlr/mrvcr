@@ -131,7 +131,8 @@ fn diagnostics(state: &State, theta: &[f64], boundary_tol: f64) -> Diagnostics {
 pub fn ffi_fit_spectral(y_obj: Robj, x_obj: Robj, eig_obj: Robj,
                         ranks_obj: Robj, theta_obj: Robj, logdet_reference: f64,
                         pet_str: &str, method_str: &str, max_iter: i32, tol: f64,
-                        stop_rule_str: &str, kkt_tol: f64, boundary_tol: f64)
+                        stop_rule_str: &str, kkt_tol: f64, boundary_tol: f64,
+                        acceleration_str: &str)
                         -> extendr_api::Result<List> {
     let pet = Pet::try_from(pet_str)?;
     let restricted = match pet {
@@ -172,9 +173,76 @@ pub fn ffi_fit_spectral(y_obj: Robj, x_obj: Robj, eig_obj: Robj,
        y.iter().any(|v| !v.is_finite()) {
         return Err(fail("Invalid spectral transformed data, kernel ranks or starting values."));
     }
+    if acceleration_str != "none" && acceleration_str != "SQUAREM" {
+        return Err(fail("acceleration must be 'none' or 'SQUAREM'."));
+    }
     let mut theta = theta0.to_vec();
     let mut state = evaluate(y, &x, d, &theta, logdet_reference, restricted)?;
+    if acceleration_str == "SQUAREM" {
+        let fit = super::squarem::run(
+            theta, state, max_iter as usize, tol, stop_rule, kkt_tol,
+            |t| evaluate(y, &x, d, t, logdet_reference, restricted),
+            |t, st| {
+                let mut next = t.to_vec();
+                for k in 0..2 {
+                    let (q, tr) = st.quadratic_trace[k];
+                    if use_mm {
+                        if !tr.is_finite() || tr <= 1e-12 * (1.0+tr.abs()) {
+                            return Err(fail(format!("MM denominator near zero for kernel {}.", k+1)));
+                        }
+                        if !q.is_finite() || q < -1e-10 * (1.0+q.abs()) {
+                            return Err(fail(format!("Invalid MM numerator for kernel {}.", k+1)));
+                        }
+                        next[k] = t[k] * (q.max(0.0)/tr).sqrt();
+                    } else {
+                        let rk = ranks[k] as f64;
+                        next[k] = (t[k] + t[k]*t[k]*(q-tr)/rk).max(0.0);
+                    }
+                    if !next[k].is_finite() { return Err(fail("Nonfinite spectral SQUAREM step.")); }
+                }
+                Ok(next)
+            },
+            |st| st.loglik,
+            |st,t| diagnostics(st, t, boundary_tol).scaled,
+        )?;
+        let theta = fit.theta;
+        let state = fit.state;
+        let final_diag = diagnostics(&state, &theta, boundary_tol);
+        let param_ok = fit.iterations > 0 && fit.relative_change < tol;
+        let kkt_ok = final_diag.scaled <= kkt_tol;
+        return Ok(list!(
+            coefficients = state.beta,
+            variance_components = theta,
+            fitted_values = Vec::<f64>::new(),
+            residuals = Vec::<f64>::new(),
+            log_likelihood = state.loglik,
+            loglik_history = fit.history,
+            converged = fit.converged,
+            iterations = fit.iterations as i32,
+            relative_change = fit.relative_change,
+            relative_loglik_change = fit.relative_ll_change,
+            score = state.score.to_vec(),
+            kkt_violation = final_diag.raw,
+            kkt_violation_scaled = final_diag.scaled,
+            boundary_components = final_diag.on_boundary.to_vec(),
+            converged_parameters = param_ok,
+            converged_kkt = kkt_ok,
+            convergence_reason = fit.reason,
+            stop_rule = stop_rule,
+            kkt_tol = kkt_tol,
+            boundary_tol = boundary_tol,
+            pet = if restricted { "REML" } else { "MLE" },
+            method = if use_mm { "MM" } else { "EM" },
+            fixed_point_evaluations = fit.fp_evals as i32,
+            likelihood_evaluations = fit.likelihood_evals as i32,
+            squarem_attempts = fit.attempts as i32,
+            squarem_accepted = fit.accepted as i32,
+            squarem_rejected = fit.rejected as i32
+        ));
+    }
+
     let mut history = vec![state.loglik];
+    let mut likelihood_evaluations = 1usize;
     let mut iterations = 0usize;
     let mut converged;
     let mut reason = "max_iter";
@@ -217,6 +285,7 @@ pub fn ffi_fit_spectral(y_obj: Robj, x_obj: Robj, eig_obj: Robj,
         let mut accepted: Option<(Vec<f64>, State)> = None;
         let slack = 1e-9 * (1.0 + state.loglik.abs());
         for _ in 0..=25 {
+            likelihood_evaluations += 1;
             if let Ok(ns) = evaluate(y, &x, d, &candidate, logdet_reference, restricted) {
                 if ns.loglik + slack >= state.loglik {
                     accepted = Some((candidate, ns));
@@ -262,6 +331,11 @@ pub fn ffi_fit_spectral(y_obj: Robj, x_obj: Robj, eig_obj: Robj,
         kkt_tol = kkt_tol,
         boundary_tol = boundary_tol,
         pet = if restricted { "REML" } else { "MLE" },
-        method = if use_mm { "MM" } else { "EM" }
+        method = if use_mm { "MM" } else { "EM" },
+        fixed_point_evaluations = iterations as i32,
+        likelihood_evaluations = likelihood_evaluations as i32,
+        squarem_attempts = 0i32,
+        squarem_accepted = 0i32,
+        squarem_rejected = 0i32
     ))
 }

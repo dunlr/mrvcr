@@ -18,7 +18,8 @@ vcm_zzt(
   init = "equal",
   stop_rule = "parameter",
   kkt_tol = sqrt(tol),
-  boundary_tol = 1e-08
+  boundary_tol = 1e-08,
+  acceleration = "none"
 )
 }
 \arguments{
@@ -56,6 +57,9 @@ defaults to \code{sqrt(tol)}. Forwarded to \code{\link[=vcm]{vcm()}}.}
 \item{boundary_tol}{Nonnegative relative threshold used to identify
 approximately zero components in the KKT diagnostic. It does not
 modify the EM/MM update. Forwarded to \code{\link[=vcm]{vcm()}}.}
+
+\item{acceleration}{\code{"none"} (default) or \code{"SQUAREM"};
+forwarded to \code{\link[=vcm]{vcm()}}.}
 }
 \value{
 An \code{mrvcr_vcm_em} object returned by \code{\link[=vcm]{vcm()}}.

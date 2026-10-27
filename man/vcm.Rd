@@ -20,7 +20,8 @@ vcm(
   stop_rule = "parameter",
   kkt_tol = sqrt(tol),
   boundary_tol = 1e-08,
-  solver = "dense"
+  solver = "dense",
+  acceleration = "none"
 )
 }
 \arguments{
@@ -74,6 +75,14 @@ The spectral solver requires exactly two kernels, with the \strong{second}
 kernel strictly positive definite; it uses a one-time generalized
 eigendecomposition and diagonal-covariance ML/REML calculations.
 PET, optimizer, and convergence rules have identical meanings in both.}
+
+\item{acceleration}{\code{"none"} (default) or \code{"SQUAREM"} for safeguarded
+squared extrapolation of the chosen EM/MM fixed-point map. SQUAREM
+checks likelihood ascent against two ordinary steps and falls back to
+those steps if extrapolation fails. \code{max_iter} counts accelerated outer
+cycles when enabled (not fixed-point evaluations). Compare the counts
+\code{fixed_point_evaluations} and \code{likelihood_evaluations}, not just iterations.
+In this experimental implementation, extrapolation magnitudes are capped.}
 }
 \value{
 An experimental \code{mrvcr_vcm_em} object (legacy class name retained

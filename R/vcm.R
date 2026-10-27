@@ -45,6 +45,13 @@
 #'   covariance contributions), `"moments"` (nonnegative residual moment
 #'   regression), or `"random"` (randomly perturb trace-scaled starts).
 #'   The moment estimator is for **initialization only**, not a separate PET.
+#' @param acceleration `"none"` (default) or `"SQUAREM"` for safeguarded
+#'   squared extrapolation of the chosen EM/MM fixed-point map. SQUAREM
+#'   checks likelihood ascent against two ordinary steps and falls back to
+#'   those steps if extrapolation fails. `max_iter` counts accelerated outer
+#'   cycles when enabled (not fixed-point evaluations). Compare the counts
+#'   `fixed_point_evaluations` and `likelihood_evaluations`, not just iterations.
+#'   In this experimental implementation, extrapolation magnitudes are capped.
 #' @param solver `"dense"` (backward-compatible default) or `"spectral"`.
 #'   The spectral solver requires exactly two kernels, with the **second**
 #'   kernel strictly positive definite; it uses a one-time generalized
@@ -76,7 +83,8 @@ vcm <- function(formula, data = parent.frame(), kernels,
                 max_iter = 500L, tol = 1e-7, contrasts = NULL,
                 model = TRUE, x = FALSE,
                 init = "equal", stop_rule = "parameter", kkt_tol = sqrt(tol),
-                boundary_tol = 1e-8, solver = "dense") {
+                boundary_tol = 1e-8, solver = "dense",
+                acceleration = "none") {
   if (!inherits(formula, "formula")) stop("'formula' must be a formula.", call. = FALSE)
   if (missing(kernels) || !is.list(kernels) || length(kernels) < 1L) {
     stop("'kernels' must be a nonempty list of covariance matrices.", call. = FALSE)
@@ -95,6 +103,11 @@ vcm <- function(formula, data = parent.frame(), kernels,
       !solver %in% c("dense", "spectral")) {
     stop("'solver' must be 'dense' or 'spectral'.", call. = FALSE)
   }
+  if (!is.character(acceleration) || length(acceleration) != 1L ||
+      is.na(acceleration) || !tolower(acceleration) %in% c("none", "squarem")) {
+    stop("'acceleration' must be 'none' or 'SQUAREM'.", call. = FALSE)
+  }
+  acceleration <- if (tolower(acceleration) == "squarem") "SQUAREM" else "none"
   if (solver == "spectral" && length(kernels) != 2L) {
     stop("'spectral' solver requires exactly two covariance kernels.", call. = FALSE)
   }
@@ -218,7 +231,8 @@ vcm <- function(formula, data = parent.frame(), kernels,
       as.numeric(spec$y), spec$X, as.numeric(spec$d), as.integer(rank),
       as.numeric(theta_init), as.numeric(spec$logdet_reference),
       pet, method, as.integer(max_iter), as.numeric(tol),
-      stop_rule, as.numeric(kkt_tol), as.numeric(boundary_tol)
+      stop_rule, as.numeric(kkt_tol), as.numeric(boundary_tol),
+      acceleration
     )
     # The invertible spectral transformation leaves beta_GLS invariant;
     # fitted and response residuals are returned on the original scale.
@@ -228,10 +242,12 @@ vcm <- function(formula, data = parent.frame(), kernels,
     result <- vcm_em_fit_rust(
       as.numeric(response), X, K, as.integer(rank), as.numeric(theta_init),
       pet, method, as.integer(max_iter), as.numeric(tol),
-      stop_rule, as.numeric(kkt_tol), as.numeric(boundary_tol)
+      stop_rule, as.numeric(kkt_tol), as.numeric(boundary_tol),
+      acceleration
     )
   }
   result$solver <- solver
+  result$acceleration <- acceleration
   result$coefficients <- stats::setNames(as.numeric(result$coefficients), colnames(X))
   result$variance_components <- stats::setNames(as.numeric(result$variance_components), kernel_names)
   result$fitted.values <- stats::setNames(as.numeric(result$fitted_values), rownames(mf))
@@ -282,7 +298,8 @@ predict.mrvcr_vcm_em <- function(object, newdata = NULL, ...) {
 
 #' @export
 print.mrvcr_vcm_em <- function(x, ...) {
-  cat("Gaussian variance component model (", x$pet, "/", x$method, ")\n", sep = "")
+  cat("Gaussian variance component model (", x$pet, "/", x$method,
+      "; ", x$solver, "; ", x$acceleration, ")\n", sep = "")
   cat("Log likelihood: ", format(x$log_likelihood, digits = 8),
       "; iterations: ", x$iterations,
       "; converged: ", x$converged, "\n", sep = "")

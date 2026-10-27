@@ -35,6 +35,8 @@
 #' @param boundary_tol Nonnegative relative threshold used to identify
 #'   approximately zero components in the KKT diagnostic. It does not
 #'   modify the EM/MM update. Forwarded to [vcm()].
+#' @param acceleration `"none"` (default) or `"SQUAREM"`;
+#'   forwarded to [vcm()].
 #' @param model Whether to retain the fixed-effects model frame.
 #' @param x Whether to retain the fixed-effects design matrix.
 #' @return An `mrvcr_vcm_em` object returned by [vcm()].
@@ -45,7 +47,7 @@ vcm_zzt <- function(formula, random_formula, data = parent.frame(),
                     max_iter = 500L, tol = 1e-7,
                     model = TRUE, x = FALSE,
                     init = "equal", stop_rule = "parameter", kkt_tol = sqrt(tol),
-                    boundary_tol = 1e-8) {
+                    boundary_tol = 1e-8, acceleration = "none") {
   if (!is.character(method) || length(method) != 1L || is.na(method) ||
       !toupper(method) %in% c("EM", "MM")) {
     stop("'method' must be 'EM' or 'MM'.", call. = FALSE)
@@ -87,6 +89,7 @@ vcm_zzt <- function(formula, random_formula, data = parent.frame(),
     stop_rule = stop_rule,
     kkt_tol = kkt_tol,
     boundary_tol = boundary_tol,
+    acceleration = acceleration,
     model = model,
     x = x
   )
